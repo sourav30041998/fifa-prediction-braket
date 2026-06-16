@@ -1934,6 +1934,12 @@ button:disabled {
     inset 0 0 0 1px rgba(255, 255, 255, 0.42);
 }
 
+.table-center-play.is-completed-trick:not(.is-collecting-trick) .table-play-slot.is-existing-play .playing-card.is-table {
+  animation: none;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
 .table-center-play.is-collecting-trick .table-play-slot {
   filter: none;
 }

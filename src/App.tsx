@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   AlertTriangle,
   Award,
@@ -610,18 +610,26 @@ function TableSideSeat({ game, seat, className }: { game: ClientGame; seat: Seat
 }
 
 function TableCenter({ game, busy }: { game: ClientGame; busy: boolean }) {
-  const [completedTrickView, setCompletedTrickView] = useState<{ trick: Trick; stage: "reveal" | "collect" } | null>(null);
+  const [completedTrickView, setCompletedTrickView] = useState<{
+    trick: Trick;
+    stage: "reveal" | "collect";
+    existingCardIds: Set<string>;
+  } | null>(null);
+  const visibleCardIdsRef = useRef<Set<string>>(new Set());
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const latestTrick = game.tricks.at(-1);
     if (!latestTrick || latestTrick.plays.length < 4) {
       setCompletedTrickView(null);
       return;
     }
 
-    setCompletedTrickView({ trick: latestTrick, stage: "reveal" });
+    const existingCardIds = new Set(visibleCardIdsRef.current);
+    setCompletedTrickView({ trick: latestTrick, stage: "reveal", existingCardIds });
     const collectTimeout = window.setTimeout(() => {
-      setCompletedTrickView((current) => (current?.trick === latestTrick ? { trick: latestTrick, stage: "collect" } : current));
+      setCompletedTrickView((current) =>
+        current?.trick === latestTrick ? { ...current, trick: latestTrick, stage: "collect" } : current
+      );
     }, TRICK_COLLECT_START_MS);
     const clearTimeout = window.setTimeout(() => setCompletedTrickView(null), TRICK_SEQUENCE_MS);
     return () => {
@@ -634,10 +642,19 @@ function TableCenter({ game, busy }: { game: ClientGame; busy: boolean }) {
   const transitioningCompletedTrick = Boolean(completedTrickView);
   const collectingTrick = completedTrickView?.stage === "collect";
   const winningSeat = completedTrickView?.trick.winner;
+  const existingCompletedPlayCount =
+    displayTrick?.plays.filter((play) => completedTrickView?.existingCardIds.has(play.card.id)).length ?? 0;
+
+  useLayoutEffect(() => {
+    visibleCardIdsRef.current = new Set((displayTrick?.plays ?? []).map((play) => play.card.id));
+  }, [displayTrick]);
+
   const trickSlots = seats.map((seat) => {
     const play = displayTrick?.plays.find((item) => item.seat === seat);
-    const playIndex = play ? displayTrick?.plays.findIndex((item) => item.seat === seat) ?? 0 : 0;
-    return { seat, play, playIndex };
+    const rawPlayIndex = play ? displayTrick?.plays.findIndex((item) => item.seat === seat) ?? 0 : 0;
+    const existingPlay = play ? Boolean(completedTrickView?.existingCardIds.has(play.card.id)) : false;
+    const playIndex = transitioningCompletedTrick ? Math.max(0, rawPlayIndex - existingCompletedPlayCount) : rawPlayIndex;
+    return { seat, play, playIndex, existingPlay };
   });
   const message =
     transitioningCompletedTrick && winningSeat
@@ -661,13 +678,13 @@ function TableCenter({ game, busy }: { game: ClientGame; busy: boolean }) {
         <span className="compass-w">W</span>
         <span className="compass-diamond" />
       </div>
-      {trickSlots.map(({ seat, play, playIndex }) => {
+      {trickSlots.map(({ seat, play, playIndex, existingPlay }) => {
         return (
           <div
             key={seat}
             className={`table-play-slot table-play-${seat.toLowerCase()} ${game.currentTurn === seat ? "is-next" : ""} ${
               transitioningCompletedTrick && winningSeat === seat ? "is-winner" : ""
-            }`}
+            } ${existingPlay ? "is-existing-play" : "is-new-play"}`}
             style={play ? ({ "--play-index": playIndex } as CSSProperties) : undefined}
           >
             {play ? <PlayingCard key={play.card.id} card={play.card} table /> : <div className="table-empty-card" />}
