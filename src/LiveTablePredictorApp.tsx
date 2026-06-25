@@ -56,6 +56,17 @@ type BracketPicks = Record<string, string>;
 type View = "groups" | "bracket";
 type FeedState = "loading" | "live" | "cached" | "error";
 
+type FifaMatchResult = {
+  IdMatch: string;
+  StartTime: string;
+  Result: number;
+  IdGroup: string;
+  HomeTeamScore: number | null;
+  AwayTeamScore: number | null;
+  HomeTeamId: string;
+  AwayTeamId: string;
+};
+
 type FifaStanding = {
   Played: number;
   Won: number;
@@ -65,11 +76,28 @@ type FifaStanding = {
   Against: number;
   GoalsDiference: number;
   Points: number;
+  Group?: Array<{ Description?: string }>;
+  MatchResults?: FifaMatchResult[];
   Team?: {
+    IdTeam?: string;
     IdCountry?: string;
     Name?: Array<{ Description?: string }>;
   };
 };
+
+type GroupFixture = {
+  id: string;
+  groupId: string;
+  kickoff: string;
+  homeCode: string;
+  awayCode: string;
+  homeScore: number | null;
+  awayScore: number | null;
+  completed: boolean;
+};
+
+type ScorePrediction = { home: number; away: number };
+type ScorePredictions = Record<string, ScorePrediction>;
 
 const fifaStandingsPage =
   "https://www.fifa.com/en/tournaments/mens/worldcup/canadamexicousa2026/standings";
@@ -118,6 +146,10 @@ function defaultGroupOrder(): GroupOrder {
 
 function findTeam(name?: string) {
   return name ? allTeams.find((team) => team.name === name) : undefined;
+}
+
+function findTeamByCode(code?: string) {
+  return code ? allTeams.find((team) => team.code === code) : undefined;
 }
 
 function loadGroupOrder(): GroupOrder {
@@ -170,6 +202,105 @@ function loadCachedStats(): { stats: StatsMap; updatedAt: string | null } {
   } catch {
     return { stats: {}, updatedAt: null };
   }
+}
+
+function loadCachedFixtures(): GroupFixture[] {
+  try {
+    return JSON.parse(window.localStorage.getItem("fifa-live-fixtures-cache-v1") ?? "[]");
+  } catch {
+    return [];
+  }
+}
+
+function loadScorePredictions(): ScorePredictions {
+  try {
+    return JSON.parse(window.localStorage.getItem("fifa-score-predictions-v1") ?? "{}");
+  } catch {
+    return {};
+  }
+}
+
+function parseFifaFixtures(rows: FifaStanding[]) {
+  const teamCodeById = Object.fromEntries(
+    rows.flatMap((row) => row.Team?.IdTeam && row.Team.IdCountry ? [[row.Team.IdTeam, row.Team.IdCountry]] : [])
+  ) as Record<string, string>;
+  const fixtures = new Map<string, GroupFixture>();
+
+  rows.forEach((row) => {
+    const groupDescription = row.Group?.[0]?.Description ?? "";
+    const groupId = groupDescription.replace("Group ", "");
+    row.MatchResults?.forEach((match) => {
+      if (fixtures.has(match.IdMatch)) return;
+      const homeCode = teamCodeById[match.HomeTeamId];
+      const awayCode = teamCodeById[match.AwayTeamId];
+      if (!homeCode || !awayCode || !groupId) return;
+      const hasScore = match.HomeTeamScore !== null && match.AwayTeamScore !== null;
+      fixtures.set(match.IdMatch, {
+        id: match.IdMatch,
+        groupId,
+        kickoff: match.StartTime,
+        homeCode,
+        awayCode,
+        homeScore: match.HomeTeamScore,
+        awayScore: match.AwayTeamScore,
+        completed: hasScore && (match.Result === 4 || new Date(match.StartTime).getTime() <= Date.now())
+      });
+    });
+  });
+
+  return [...fixtures.values()].sort((a, b) => a.kickoff.localeCompare(b.kickoff));
+}
+
+function calculateProjectedStats(fixtures: GroupFixture[], predictions: ScorePredictions) {
+  const projected = Object.fromEntries(allTeams.map((team) => [team.code, { ...emptyStats }])) as StatsMap;
+
+  fixtures.forEach((fixture) => {
+    const predicted = predictions[fixture.id];
+    const home = fixture.completed ? fixture.homeScore : predicted?.home;
+    const away = fixture.completed ? fixture.awayScore : predicted?.away;
+    if (home === null || away === null || home === undefined || away === undefined) return;
+
+    const homeStats = projected[fixture.homeCode];
+    const awayStats = projected[fixture.awayCode];
+    if (!homeStats || !awayStats) return;
+
+    homeStats.mp += 1;
+    awayStats.mp += 1;
+    homeStats.gf += home;
+    homeStats.ga += away;
+    awayStats.gf += away;
+    awayStats.ga += home;
+    homeStats.gd = homeStats.gf - homeStats.ga;
+    awayStats.gd = awayStats.gf - awayStats.ga;
+
+    if (home > away) {
+      homeStats.w += 1;
+      awayStats.l += 1;
+      homeStats.pts += 3;
+    } else if (away > home) {
+      awayStats.w += 1;
+      homeStats.l += 1;
+      awayStats.pts += 3;
+    } else {
+      homeStats.d += 1;
+      awayStats.d += 1;
+      homeStats.pts += 1;
+      awayStats.pts += 1;
+    }
+  });
+
+  return projected;
+}
+
+function compareTeamsByProjectedStats(a: Team, b: Team, stats: StatsMap) {
+  const aStats = stats[a.code] ?? emptyStats;
+  const bStats = stats[b.code] ?? emptyStats;
+  return (
+    bStats.pts - aStats.pts ||
+    bStats.gd - aStats.gd ||
+    bStats.gf - aStats.gf ||
+    a.name.localeCompare(b.name)
+  );
 }
 
 function parseFifaStandings(rows: FifaStanding[]) {
@@ -338,6 +469,9 @@ function LiveTablePredictorApp() {
   const [thirdOrder, setThirdOrder] = useState(() => loadThirdOrder(initialOrder));
   const [bracketPicks, setBracketPicks] = useState<BracketPicks>(loadBracketPicks);
   const [stats, setStats] = useState<StatsMap>(cache.stats);
+  const [fixtures, setFixtures] = useState<GroupFixture[]>(loadCachedFixtures);
+  const [scorePredictions, setScorePredictions] = useState<ScorePredictions>(loadScorePredictions);
+  const [predictionGroup, setPredictionGroup] = useState<string | null>(null);
   const [feedState, setFeedState] = useState<FeedState>(
     Object.keys(cache.stats).length ? "cached" : "loading"
   );
@@ -354,17 +488,20 @@ function LiveTablePredictorApp() {
       if (!response.ok) throw new Error(`FIFA returned ${response.status}`);
       const payload = (await response.json()) as { Results?: FifaStanding[] };
       const nextStats = parseFifaStandings(payload.Results ?? []);
-      if (Object.keys(nextStats).length < 48) {
+      const nextFixtures = parseFifaFixtures(payload.Results ?? []);
+      if (Object.keys(nextStats).length < 48 || nextFixtures.length < 72) {
         throw new Error("Incomplete FIFA standings response");
       }
       const updatedAt = new Date().toISOString();
       setStats(nextStats);
+      setFixtures(nextFixtures);
       setLastUpdated(updatedAt);
       setFeedState("live");
       window.localStorage.setItem(
         "fifa-live-standings-cache-v1",
         JSON.stringify({ stats: nextStats, updatedAt })
       );
+      window.localStorage.setItem("fifa-live-fixtures-cache-v1", JSON.stringify(nextFixtures));
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       setFeedState(Object.keys(loadCachedStats().stats).length ? "cached" : "error");
@@ -404,6 +541,15 @@ function LiveTablePredictorApp() {
   useEffect(() => {
     window.localStorage.setItem("fifa-rank-predictor-bracket-v1", JSON.stringify(bracketPicks));
   }, [bracketPicks]);
+
+  useEffect(() => {
+    window.localStorage.setItem("fifa-score-predictions-v1", JSON.stringify(scorePredictions));
+  }, [scorePredictions]);
+
+  const projectedStats = useMemo(
+    () => fixtures.length ? calculateProjectedStats(fixtures, scorePredictions) : stats,
+    [fixtures, scorePredictions, stats]
+  );
 
   const bestThirdNames = new Set(thirdOrder.slice(0, 8));
   const roundOf32 = useMemo(
@@ -447,10 +593,38 @@ function LiveTablePredictorApp() {
     setBracketPicks({});
   }
 
+  function saveGroupPredictions(groupId: string, groupPredictions: ScorePredictions) {
+    const groupFixtureIds = new Set(fixtures.filter((fixture) => fixture.groupId === groupId).map((fixture) => fixture.id));
+    const nextPredictions = Object.fromEntries(
+      Object.entries({ ...scorePredictions, ...groupPredictions }).filter(([matchId]) => {
+        const fixture = fixtures.find((item) => item.id === matchId);
+        return !fixture?.completed && (!groupFixtureIds.has(matchId) || groupPredictions[matchId]);
+      })
+    ) as ScorePredictions;
+    const nextStats = calculateProjectedStats(fixtures, nextPredictions);
+    const group = groups.find((item) => item.id === groupId);
+    if (!group) return;
+
+    const rankedGroup = [...group.teams].sort((a, b) => compareTeamsByProjectedStats(a, b, nextStats));
+    const nextGroupOrder = { ...groupOrder, [groupId]: rankedGroup.map((team) => team.name) };
+    const rankedThirds = groups
+      .map((item) => findTeam(nextGroupOrder[item.id][2]))
+      .filter((team): team is Team => Boolean(team))
+      .sort((a, b) => compareTeamsByProjectedStats(a, b, nextStats));
+
+    setScorePredictions(nextPredictions);
+    setGroupOrder(nextGroupOrder);
+    setThirdOrder(rankedThirds.map((team) => team.name));
+    setBracketPicks({});
+    setPredictionGroup(null);
+  }
+
   function resetPredictions() {
     const defaults = defaultGroupOrder();
     setGroupOrder(defaults);
     setThirdOrder(groups.map((group) => defaults[group.id][2]));
+    setScorePredictions({});
+    setPredictionGroup(null);
     setBracketPicks({});
   }
 
@@ -501,12 +675,14 @@ function LiveTablePredictorApp() {
             groupOrder={groupOrder}
             thirdOrder={thirdOrder}
             bestThirdNames={bestThirdNames}
-            stats={stats}
+            stats={projectedStats}
+            fixtures={fixtures}
             feedState={feedState}
             lastUpdated={lastUpdated}
             onRefresh={() => void refreshStandings()}
             onMoveGroupTeam={moveGroupTeam}
             onMoveThirdTeam={moveThirdTeam}
+            onPredictGroup={setPredictionGroup}
             onReset={resetPredictions}
             onContinue={() => switchView("bracket")}
           />
@@ -523,6 +699,15 @@ function LiveTablePredictorApp() {
         )}
       </main>
       <Footer />
+      {predictionGroup && (
+        <GroupMatchesModal
+          group={groups.find((group) => group.id === predictionGroup)!}
+          fixtures={fixtures.filter((fixture) => fixture.groupId === predictionGroup)}
+          predictions={scorePredictions}
+          onClose={() => setPredictionGroup(null)}
+          onSave={(predictions) => saveGroupPredictions(predictionGroup, predictions)}
+        />
+      )}
       {showGuide && <GuideModal onClose={() => setShowGuide(false)} />}
     </div>
   );
@@ -611,11 +796,13 @@ function GroupPredictor({
   thirdOrder,
   bestThirdNames,
   stats,
+  fixtures,
   feedState,
   lastUpdated,
   onRefresh,
   onMoveGroupTeam,
   onMoveThirdTeam,
+  onPredictGroup,
   onReset,
   onContinue
 }: {
@@ -623,11 +810,13 @@ function GroupPredictor({
   thirdOrder: string[];
   bestThirdNames: Set<string>;
   stats: StatsMap;
+  fixtures: GroupFixture[];
   feedState: FeedState;
   lastUpdated: string | null;
   onRefresh: () => void;
   onMoveGroupTeam: (groupId: string, fromIndex: number, toIndex: number) => void;
   onMoveThirdTeam: (fromIndex: number, toIndex: number) => void;
+  onPredictGroup: (groupId: string) => void;
   onReset: () => void;
   onContinue: () => void;
 }) {
@@ -656,12 +845,14 @@ function GroupPredictor({
             order={groupOrder[group.id]}
             bestThirdNames={bestThirdNames}
             stats={stats}
+            fixtureCount={fixtures.filter((fixture) => fixture.groupId === group.id).length}
             onMove={onMoveGroupTeam}
+            onPredict={onPredictGroup}
           />
         ))}
       </div>
 
-      <ThirdPlacePredictor order={thirdOrder} onMove={onMoveThirdTeam} />
+      <ThirdPlacePredictor order={thirdOrder} stats={stats} onMove={onMoveThirdTeam} />
 
       <div className="sticky-actions">
         <button className="secondary-button" onClick={onReset} type="button"><RotateCcw size={17} /> Reset FIFA order</button>
@@ -696,13 +887,17 @@ function LiveGroupCard({
   order,
   bestThirdNames,
   stats,
-  onMove
+  fixtureCount,
+  onMove,
+  onPredict
 }: {
   group: Group;
   order: string[];
   bestThirdNames: Set<string>;
   stats: StatsMap;
+  fixtureCount: number;
   onMove: (groupId: string, fromIndex: number, toIndex: number) => void;
+  onPredict: (groupId: string) => void;
 }) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   function drop(event: DragEvent<HTMLDivElement>, toIndex: number) {
@@ -757,12 +952,21 @@ function LiveGroupCard({
           })}
         </div>
       </div>
-      <footer><span>Q automatic · 3Q best third</span><span>Live FIFA stats</span></footer>
+      <footer><span>Q automatic · 3Q best third</span><span>Live + predicted stats</span></footer>
+      <button
+        className="group-matches-button"
+        disabled={fixtureCount === 0}
+        onClick={() => onPredict(group.id)}
+        type="button"
+      >
+        <span>Predict Group {group.id} matches</span>
+        <strong>{fixtureCount || "—"}/6</strong>
+      </button>
     </article>
   );
 }
 
-function ThirdPlacePredictor({ order, onMove }: { order: string[]; onMove: (fromIndex: number, toIndex: number) => void }) {
+function ThirdPlacePredictor({ order, stats, onMove }: { order: string[]; stats: StatsMap; onMove: (fromIndex: number, toIndex: number) => void }) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   function drop(event: DragEvent<HTMLDivElement>, toIndex: number) {
     event.preventDefault();
@@ -782,6 +986,7 @@ function ThirdPlacePredictor({ order, onMove }: { order: string[]; onMove: (from
       <div className="third-rank-list">
         {order.map((teamName, index) => {
           const team = findTeam(teamName)!;
+          const teamStats = stats[team.code] ?? emptyStats;
           const qualifies = index < 8;
           return (
             <div
@@ -797,6 +1002,9 @@ function ThirdPlacePredictor({ order, onMove }: { order: string[]; onMove: (from
               <GripVertical className="drag-handle" size={18} />
               <Flag team={team} />
               <strong>{team.name}</strong>
+              <span className="third-stat"><b>{teamStats.pts}</b> Pts</span>
+              <span className="third-stat">{teamStats.gd > 0 ? "+" : ""}{teamStats.gd} GD</span>
+              <span className="third-stat">{teamStats.gf} GF</span>
               <span className="third-group">Group {team.groupId}</span>
               <span className="third-qualifies">{qualifies ? <><Check size={14} /> Qualified</> : "Eliminated"}</span>
               <span className="rank-actions">
@@ -958,6 +1166,116 @@ function OfficialMatchCard({
     </article>
   );
 }
+function GroupMatchesModal({
+  group,
+  fixtures,
+  predictions,
+  onClose,
+  onSave
+}: {
+  group: Group;
+  fixtures: GroupFixture[];
+  predictions: ScorePredictions;
+  onClose: () => void;
+  onSave: (predictions: ScorePredictions) => void;
+}) {
+  const [draft, setDraft] = useState<ScorePredictions>(() =>
+    Object.fromEntries(
+      fixtures
+        .filter((fixture) => !fixture.completed && new Date(fixture.kickoff).getTime() > Date.now())
+        .map((fixture) => [fixture.id, predictions[fixture.id] ?? { home: 0, away: 0 }])
+    )
+  );
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event: KeyboardEvent) => event.key === "Escape" && onClose();
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [onClose]);
+
+  function updateScore(matchId: string, side: "home" | "away", value: number) {
+    const safeValue = Math.max(0, Math.min(20, Number.isFinite(value) ? Math.floor(value) : 0));
+    setDraft((current) => ({
+      ...current,
+      [matchId]: { ...(current[matchId] ?? { home: 0, away: 0 }), [side]: safeValue }
+    }));
+  }
+
+  return (
+    <div className="modal-backdrop match-prediction-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        aria-labelledby="match-prediction-title"
+        aria-modal="true"
+        className="group-match-modal"
+        role="dialog"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="group-match-modal-header">
+          <div>
+            <span className="eyebrow">GROUP {group.id} · ALL MATCHES</span>
+            <h2 id="match-prediction-title">Predict the scorelines</h2>
+            <p>Completed FIFA results are locked. Enter scores for upcoming matches to project the table.</p>
+          </div>
+          <button className="modal-close" aria-label="Close match predictions" onClick={onClose} type="button"><X size={22} /></button>
+        </header>
+
+        <div className="group-fixture-list">
+          {fixtures.map((fixture) => {
+            const homeTeam = findTeamByCode(fixture.homeCode)!;
+            const awayTeam = findTeamByCode(fixture.awayCode)!;
+            const kickoff = new Date(fixture.kickoff);
+            const isPast = kickoff.getTime() <= Date.now();
+            const canPredict = !fixture.completed && !isPast;
+            const predicted = draft[fixture.id] ?? { home: 0, away: 0 };
+
+            return (
+              <article className={`group-fixture ${fixture.completed ? "completed" : canPredict ? "predictable" : "awaiting"}`} key={fixture.id}>
+                <div className="fixture-meta">
+                  <span>{kickoff.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}</span>
+                  <strong>{kickoff.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</strong>
+                  <em>{fixture.completed ? "Full time" : canPredict ? "Your prediction" : "Awaiting official result"}</em>
+                </div>
+                <div className="fixture-team home-team">
+                  <strong>{homeTeam.name}</strong>
+                  <Flag team={homeTeam} />
+                </div>
+                <div className="fixture-scoreline">
+                  {fixture.completed ? (
+                    <><strong>{fixture.homeScore}</strong><span>–</span><strong>{fixture.awayScore}</strong></>
+                  ) : canPredict ? (
+                    <>
+                      <input aria-label={`${homeTeam.name} predicted goals`} inputMode="numeric" max="20" min="0" onChange={(event) => updateScore(fixture.id, "home", Number(event.target.value))} type="number" value={predicted.home} />
+                      <span>–</span>
+                      <input aria-label={`${awayTeam.name} predicted goals`} inputMode="numeric" max="20" min="0" onChange={(event) => updateScore(fixture.id, "away", Number(event.target.value))} type="number" value={predicted.away} />
+                    </>
+                  ) : (
+                    <span className="fixture-pending-score">TBD</span>
+                  )}
+                </div>
+                <div className="fixture-team away-team">
+                  <Flag team={awayTeam} />
+                  <strong>{awayTeam.name}</strong>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+
+        <footer className="group-match-modal-footer">
+          <div><Check size={16} /><span>Saving recalculates Group {group.id} and the third-place board.</span></div>
+          <button className="secondary-button" onClick={onClose} type="button">Cancel</button>
+          <button className="primary-button" onClick={() => onSave(draft)} type="button">Save predictions <ArrowRight size={17} /></button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
 function GuideModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
@@ -968,7 +1286,7 @@ function GuideModal({ onClose }: { onClose: () => void }) {
         <h2 id="guide-title">Live stats, your order</h2>
         <ol>
           <li><span>1</span><div><strong>Read the live table</strong><p>MP, W, D, L, GF, GA, GD and Pts come from FIFA automatically.</p></div></li>
-          <li><span>2</span><div><strong>Order every group</strong><p>Drag teams or use the arrows. Live updates never overwrite your prediction.</p></div></li>
+          <li><span>2</span><div><strong>Predict each group</strong><p>Open the group matches, enter future scorelines, and save to recalculate the table.</p></div></li>
           <li><span>3</span><div><strong>Rank the third-place teams</strong><p>The top eight in your separate third-place table qualify.</p></div></li>
         </ol>
         <button className="primary-button" onClick={onClose} type="button">Start predicting <ArrowRight size={18} /></button>
