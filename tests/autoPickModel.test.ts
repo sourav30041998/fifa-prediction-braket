@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   calculateTeamStrength,
   calculateWinProbability,
+  deterministicMatchRandom,
   pickProbableWinner,
   type PredictionContext
 } from "../src/autoPickModel";
@@ -33,6 +34,18 @@ assert.ok(probability <= 0.82);
 
 assert.equal(pickProbableWinner(favorite, underdog, context, () => 0).winner.name, "Favorite");
 assert.equal(pickProbableWinner(favorite, underdog, context, () => 0.99).winner.name, "Underdog");
+
+const firstDraw = deterministicMatchRandom(73, favorite, underdog);
+const repeatedDraw = deterministicMatchRandom(73, favorite, underdog);
+const affectedDraw = deterministicMatchRandom(73, favorite, { name: "Changed team", code: "NEW" });
+const unrelatedDraw = deterministicMatchRandom(88, favorite, underdog);
+assert.equal(firstDraw, repeatedDraw);
+assert.notEqual(firstDraw, affectedDraw);
+assert.notEqual(firstDraw, unrelatedDraw);
+
+const firstPrediction = pickProbableWinner(favorite, underdog, context, () => firstDraw);
+const repeatedPrediction = pickProbableWinner(favorite, underdog, context, () => repeatedDraw);
+assert.equal(firstPrediction.winner.name, repeatedPrediction.winner.name);
 
 const evenContext: PredictionContext = {
   rankings: {},

@@ -40,6 +40,7 @@ const MODEL_WEIGHTS = {
 
 const MIN_WIN_PROBABILITY = 0.18;
 const MAX_WIN_PROBABILITY = 0.82;
+const AUTO_PICK_MODEL_VERSION = "probability-v2";
 
 function clamp(value: number, minimum = 0, maximum = 1) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -95,6 +96,29 @@ export function calculateWinProbability(
   const strengthB = calculateTeamStrength(teamB, context).total;
   const logisticProbability = 1 / (1 + Math.exp(-(strengthA - strengthB) * 5));
   return clamp(logisticProbability, MIN_WIN_PROBABILITY, MAX_WIN_PROBABILITY);
+}
+
+function hashString(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+export function deterministicMatchRandom(
+  matchNumber: number,
+  teamA: PredictionTeam,
+  teamB: PredictionTeam
+) {
+  const seed = [
+    AUTO_PICK_MODEL_VERSION,
+    matchNumber,
+    teamA.code,
+    teamB.code
+  ].join(":");
+  return hashString(seed) / 4294967296;
 }
 
 export function pickProbableWinner(

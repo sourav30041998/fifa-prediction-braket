@@ -27,7 +27,11 @@ import {
   X
 } from "lucide-react";
 import { getAnnexCAllocation } from "./fifaAnnexC";
-import { pickProbableWinner, type PredictionRanking } from "./autoPickModel";
+import {
+  deterministicMatchRandom,
+  pickProbableWinner,
+  type PredictionRanking
+} from "./autoPickModel";
 
 type Team = {
   name: string;
@@ -743,7 +747,12 @@ function LiveTablePredictorApp() {
       const match = resolveOfficialMatch(matchNumber, roundOf32, next);
       const [teamA, teamB] = match.teams;
       const winner = teamA && teamB
-        ? pickProbableWinner(teamA, teamB, predictionContext).winner
+        ? pickProbableWinner(
+            teamA,
+            teamB,
+            predictionContext,
+            () => deterministicMatchRandom(matchNumber, teamA, teamB)
+          ).winner
         : teamA ?? teamB;
       if (winner) next[pickKey] = winner.name;
     });
@@ -1163,7 +1172,7 @@ function KnockoutStage({
           <span className="eyebrow">OFFICIAL FIFA PATH · M73–M104</span>
           <h2>Knockout bracket</h2>
           <p>
-            Round-of-32 slots follow FIFA Annex C. Auto-pick preserves your manual choices and models only the remaining matches.
+            Auto-pick preserves manual choices, repeats the same result for the same matchups, and recalculates only paths affected by a changed pick.
           </p>
         </div>
         <div className="bracket-tools">
