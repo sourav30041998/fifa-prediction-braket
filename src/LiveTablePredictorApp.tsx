@@ -1065,8 +1065,6 @@ function KnockoutStage({
         </article>
       )}
 
-      <RoundOf32Explainer roundOf32={roundOf32} />
-
       <div className="official-bracket-shell" aria-label="FIFA World Cup 2026 knockout bracket">
         <CompactRound title="Round of 32" numbers={leftBracketMatches.round32} roundOf32={roundOf32} picks={picks} onPick={onPick} side="left" />
         <CompactRound title="Round of 16" numbers={leftBracketMatches.round16} roundOf32={roundOf32} picks={picks} onPick={onPick} side="left" />
@@ -1094,52 +1092,6 @@ function KnockoutStage({
         Third-place opponents are assigned from the exact eight qualifying groups using the
         <a href={fifaRegulationsUrl} target="_blank" rel="noreferrer"> FIFA World Cup 2026 Regulations, Annex C</a>.
       </p>
-    </section>
-  );
-}
-
-function RoundOf32Explainer({ roundOf32 }: { roundOf32: Map<number, OfficialMatch> }) {
-  const matches = Array.from({ length: 16 }, (_, index) => roundOf32.get(73 + index)).filter(
-    (match): match is OfficialMatch => Boolean(match)
-  );
-  const thirdPlaceGroups = [...new Set(
-    matches.flatMap((match) => match.labels.filter((label) => label.startsWith("3")).map((label) => label.slice(1)))
-  )].sort();
-
-  return (
-    <section className="round32-explainer" aria-labelledby="round32-explainer-title">
-      <header className="round32-explainer-header">
-        <div>
-          <span className="eyebrow">QUALIFICATION MAP</span>
-          <h3 id="round32-explainer-title">How the Round of 32 is decided</h3>
-          <p>Each slot identifies the group and finishing position that feeds the official FIFA match.</p>
-        </div>
-        <div className="round32-slot-legend" aria-label="Qualification slot legend">
-          <span><b>1A</b> Group A winner</span>
-          <span><b>2A</b> Group A runner-up</span>
-          <span><b>3A</b> Qualified third from Group A</span>
-        </div>
-      </header>
-
-      <div className="third-group-allocation">
-        <strong>Best third-place groups in this prediction</strong>
-        <div>{thirdPlaceGroups.map((groupId) => <span key={groupId}>3{groupId}</span>)}</div>
-        <p>FIFA Annex C assigns these eight third-place teams against group winners.</p>
-      </div>
-
-      <div className="round32-match-map">
-        {matches.map((match) => (
-          <article className="round32-map-card" key={match.number}>
-            <span className="round32-map-number">M{match.number}</span>
-            {match.teams.map((team, index) => (
-              <div className="round32-map-team" key={`${match.number}-${match.labels[index]}`}>
-                <b>{match.labels[index]}</b>
-                {team ? <><Flag team={team} /><strong>{team.name}</strong></> : <em>To be decided</em>}
-              </div>
-            ))}
-          </article>
-        ))}
-      </div>
     </section>
   );
 }
@@ -1187,6 +1139,8 @@ function OfficialMatchCard({
   onPick: (matchNumber: number, teamName: string) => void;
   featured?: boolean;
 }) {
+  const isRoundOf32 = match.number >= 73 && match.number <= 88;
+
   return (
     <article className={`official-match-card ${selected ? "decided" : ""} ${featured ? "featured" : ""}`}>
       <span className="official-match-number">M{match.number}</span>
@@ -1194,19 +1148,31 @@ function OfficialMatchCard({
         team ? (
           <button
             aria-pressed={selected === team.name}
-            className={selected === team.name ? "winner" : selected ? "loser" : ""}
+            className={`${selected === team.name ? "winner" : selected ? "loser" : ""} ${isRoundOf32 ? "round32-team-row" : ""}`}
             key={`${match.number}-${team.name}`}
             onClick={() => onPick(match.number, team.name)}
             type="button"
           >
-            <span className="official-slot-label">{match.labels[index]}</span>
-            <Flag team={team} />
-            <span className="official-team-name">{team.name}</span>
+            {isRoundOf32 ? (
+              <>
+                <Flag team={team} />
+                <span className="official-team-details">
+                  <span className="official-team-name">{team.name}</span>
+                  <span className="round32-source-label">{formatRoundOf32Slot(match.labels[index])}</span>
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="official-slot-label">{match.labels[index]}</span>
+                <Flag team={team} />
+                <span className="official-team-name">{team.name}</span>
+              </>
+            )}
             <span className="winner-check">{selected === team.name && <Check size={11} />}</span>
           </button>
         ) : (
-          <div className="official-team-placeholder" key={`${match.number}-${index}`}>
-            <span>{match.labels[index]}</span>
+          <div className={`official-team-placeholder ${isRoundOf32 ? "round32-placeholder" : ""}`} key={`${match.number}-${index}`}>
+            <span>{isRoundOf32 ? formatRoundOf32Slot(match.labels[index]) : match.labels[index]}</span>
             <em>Awaiting winner</em>
           </div>
         )
@@ -1214,6 +1180,13 @@ function OfficialMatchCard({
     </article>
   );
 }
+function formatRoundOf32Slot(label: string) {
+  const position = label.charAt(0);
+  const group = label.slice(1);
+  const positionLabel = position === "1" ? "1st" : position === "2" ? "2nd" : position === "3" ? "3rd" : position;
+  return `Group ${group} \u00B7 ${positionLabel}`;
+}
+
 function GroupMatchesModal({
   group,
   fixtures,

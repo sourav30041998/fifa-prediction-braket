@@ -399,3 +399,47 @@
     flex-wrap: wrap;
   }
 }
+.official-match-card button.round32-team-row {
+  min-height: 29px;
+  grid-template-columns: 23px minmax(0, 1fr) 13px;
+}
+
+.official-team-details {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.round32-source-label {
+  overflow: hidden;
+  color: #768297;
+  font-size: clamp(6px, 0.52vw, 8px);
+  font-weight: 750;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.official-team-placeholder.round32-placeholder {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.official-team-placeholder.round32-placeholder > span {
+  text-align: left;
+}
+
+@media (max-width: 1180px) {
+  .official-match-card button.round32-team-row {
+    grid-template-columns: 20px minmax(0, 1fr) 12px;
+  }
+}
+
+@media (max-width: 900px) {
+  .official-match-card button.round32-team-row {
+    grid-template-columns: 29px minmax(0, 1fr) 18px;
+  }
+
+  .round32-source-label {
+    font-size: 8px;
+  }
+}
