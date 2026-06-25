@@ -1065,6 +1065,8 @@ function KnockoutStage({
         </article>
       )}
 
+      <RoundOf32Explainer roundOf32={roundOf32} />
+
       <div className="official-bracket-shell" aria-label="FIFA World Cup 2026 knockout bracket">
         <CompactRound title="Round of 32" numbers={leftBracketMatches.round32} roundOf32={roundOf32} picks={picks} onPick={onPick} side="left" />
         <CompactRound title="Round of 16" numbers={leftBracketMatches.round16} roundOf32={roundOf32} picks={picks} onPick={onPick} side="left" />
@@ -1092,6 +1094,52 @@ function KnockoutStage({
         Third-place opponents are assigned from the exact eight qualifying groups using the
         <a href={fifaRegulationsUrl} target="_blank" rel="noreferrer"> FIFA World Cup 2026 Regulations, Annex C</a>.
       </p>
+    </section>
+  );
+}
+
+function RoundOf32Explainer({ roundOf32 }: { roundOf32: Map<number, OfficialMatch> }) {
+  const matches = Array.from({ length: 16 }, (_, index) => roundOf32.get(73 + index)).filter(
+    (match): match is OfficialMatch => Boolean(match)
+  );
+  const thirdPlaceGroups = [...new Set(
+    matches.flatMap((match) => match.labels.filter((label) => label.startsWith("3")).map((label) => label.slice(1)))
+  )].sort();
+
+  return (
+    <section className="round32-explainer" aria-labelledby="round32-explainer-title">
+      <header className="round32-explainer-header">
+        <div>
+          <span className="eyebrow">QUALIFICATION MAP</span>
+          <h3 id="round32-explainer-title">How the Round of 32 is decided</h3>
+          <p>Each slot identifies the group and finishing position that feeds the official FIFA match.</p>
+        </div>
+        <div className="round32-slot-legend" aria-label="Qualification slot legend">
+          <span><b>1A</b> Group A winner</span>
+          <span><b>2A</b> Group A runner-up</span>
+          <span><b>3A</b> Qualified third from Group A</span>
+        </div>
+      </header>
+
+      <div className="third-group-allocation">
+        <strong>Best third-place groups in this prediction</strong>
+        <div>{thirdPlaceGroups.map((groupId) => <span key={groupId}>3{groupId}</span>)}</div>
+        <p>FIFA Annex C assigns these eight third-place teams against group winners.</p>
+      </div>
+
+      <div className="round32-match-map">
+        {matches.map((match) => (
+          <article className="round32-map-card" key={match.number}>
+            <span className="round32-map-number">M{match.number}</span>
+            {match.teams.map((team, index) => (
+              <div className="round32-map-team" key={`${match.number}-${match.labels[index]}`}>
+                <b>{match.labels[index]}</b>
+                {team ? <><Flag team={team} /><strong>{team.name}</strong></> : <em>To be decided</em>}
+              </div>
+            ))}
+          </article>
+        ))}
+      </div>
     </section>
   );
 }

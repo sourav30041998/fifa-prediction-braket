@@ -1,0 +1,237 @@
+.round32-explainer {
+  margin-bottom: 20px;
+  overflow: hidden;
+  border: 1px solid #d8deea;
+  border-radius: 10px;
+  background: white;
+  box-shadow: 0 12px 32px rgba(8, 29, 67, 0.075);
+}
+
+.round32-explainer-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 24px;
+  border-bottom: 1px solid #dce2ec;
+  background:
+    radial-gradient(circle at 95% 0, rgba(255, 255, 255, 0.1), transparent 17rem),
+    linear-gradient(110deg, #061648, #123fc5);
+  padding: 20px 24px;
+  color: white;
+}
+
+.round32-explainer-header .eyebrow {
+  margin-bottom: 5px;
+  color: #ff9b4f;
+}
+
+.round32-explainer-header h3 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: clamp(25px, 2.5vw, 35px);
+  font-weight: 900;
+  letter-spacing: -0.025em;
+}
+
+.round32-explainer-header p {
+  margin: 7px 0 0;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 11px;
+}
+
+.round32-slot-legend {
+  display: grid;
+  gap: 5px;
+  min-width: 220px;
+  border-left: 1px solid rgba(255, 255, 255, 0.2);
+  padding-left: 20px;
+}
+
+.round32-slot-legend span {
+  color: #cbd7f6;
+  font-size: 9px;
+}
+
+.round32-slot-legend b {
+  display: inline-grid;
+  width: 26px;
+  height: 20px;
+  place-items: center;
+  margin-right: 7px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.14);
+  color: white;
+  font-size: 9px;
+}
+
+.third-group-allocation {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  border-bottom: 1px solid #e1e6ee;
+  background: #f6f8fb;
+  padding: 12px 20px;
+}
+
+.third-group-allocation > strong {
+  color: #28354a;
+  font-family: var(--display);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.third-group-allocation > div {
+  display: flex;
+  gap: 5px;
+}
+
+.third-group-allocation > div span {
+  display: grid;
+  min-width: 28px;
+  height: 24px;
+  place-items: center;
+  border: 1px solid #9db0e7;
+  border-radius: 4px;
+  background: #eaf0ff;
+  color: var(--royal);
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.third-group-allocation p {
+  margin: 0;
+  color: #768195;
+  font-size: 9px;
+  text-align: right;
+}
+
+.round32-match-map {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+  padding: 14px;
+}
+
+.round32-map-card {
+  position: relative;
+  display: grid;
+  overflow: hidden;
+  border: 1px solid #d5dce8;
+  border-radius: 6px;
+  background: white;
+}
+
+.round32-map-number {
+  display: block;
+  border-bottom: 1px solid #e6eaf1;
+  background: #f3f5f8;
+  padding: 4px 7px;
+  color: #6f7a8d;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-align: right;
+}
+
+.round32-map-team {
+  display: grid;
+  min-height: 31px;
+  grid-template-columns: 27px 27px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid #edf0f5;
+  padding: 3px 7px;
+}
+
+.round32-map-team:last-child {
+  border-bottom: 0;
+}
+
+.round32-map-team > b {
+  display: grid;
+  height: 20px;
+  place-items: center;
+  border-radius: 3px;
+  background: #edf2ff;
+  color: var(--royal);
+  font-size: 8px;
+}
+
+.round32-map-team .official-flag {
+  width: 25px;
+  height: 17px;
+}
+
+.round32-map-team > strong {
+  overflow: hidden;
+  color: #1d293d;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.round32-map-team > em {
+  grid-column: 2 / -1;
+  color: #929cac;
+  font-size: 8px;
+  font-style: normal;
+}
+
+@media (max-width: 1050px) {
+  .round32-match-map {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .round32-explainer-header {
+    grid-template-columns: 1fr;
+  }
+
+  .round32-slot-legend {
+    min-width: 0;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border-top: 1px solid rgba(255, 255, 255, 0.2);
+    border-left: 0;
+    padding-top: 12px;
+    padding-left: 0;
+  }
+
+  .round32-slot-legend span {
+    display: grid;
+    gap: 4px;
+  }
+
+  .third-group-allocation {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .third-group-allocation > div {
+    flex-wrap: wrap;
+  }
+
+  .third-group-allocation p {
+    text-align: left;
+  }
+
+  .round32-match-map {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .round32-explainer-header {
+    padding: 18px;
+  }
+
+  .round32-slot-legend {
+    grid-template-columns: 1fr;
+  }
+
+  .round32-match-map {
+    grid-template-columns: 1fr;
+    padding: 10px;
+  }
+}
