@@ -59,6 +59,10 @@ type GroupOrder = Record<string, string[]>;
 type StatsMap = Record<string, TeamStats>;
 type RankingMap = Record<string, PredictionRanking>;
 type BracketPicks = Record<string, string>;
+type AutoPickCache = {
+  baseline: BracketPicks;
+  generated: BracketPicks;
+};
 type View = "groups" | "bracket";
 type FeedState = "loading" | "live" | "cached" | "error";
 
@@ -211,6 +215,17 @@ function loadAutoPickSnapshot(): BracketPicks | null {
   try {
     const saved = window.localStorage.getItem("fifa-auto-pick-snapshot-v1");
     return saved ? JSON.parse(saved) : null;
+  } catch {
+    return null;
+  }
+}
+
+function loadAutoPickCache(): AutoPickCache | null {
+  try {
+    const saved = window.localStorage.getItem("fifa-auto-pick-cache-v1");
+    if (!saved) return null;
+    const parsed = JSON.parse(saved) as AutoPickCache;
+    return parsed?.baseline && parsed?.generated ? parsed : null;
   } catch {
     return null;
   }
@@ -495,6 +510,10 @@ function sanitizeOfficialPicks(picks: BracketPicks, roundOf32: Map<number, Offic
   });
   return next;
 }
+
+function sameBracketPicks(left: BracketPicks, right: BracketPicks) {
+  return officialPickOrder.every((matchNumber) => left[`m${matchNumber}`] === right[`m${matchNumber}`]);
+}
 function LiveTablePredictorApp() {
   const initialOrder = useMemo(loadGroupOrder, []);
   const cache = useMemo(loadCachedStats, []);
@@ -504,6 +523,7 @@ function LiveTablePredictorApp() {
   const [thirdOrder, setThirdOrder] = useState(() => loadThirdOrder(initialOrder));
   const [bracketPicks, setBracketPicks] = useState<BracketPicks>(loadBracketPicks);
   const [autoPickSnapshot, setAutoPickSnapshot] = useState<BracketPicks | null>(loadAutoPickSnapshot);
+  const [autoPickCache, setAutoPickCache] = useState<AutoPickCache | null>(loadAutoPickCache);
   const [stats, setStats] = useState<StatsMap>(cache.stats);
   const [rankings, setRankings] = useState<RankingMap>(rankingCache.rankings);
   const [fixtures, setFixtures] = useState<GroupFixture[]>(loadCachedFixtures);
@@ -626,6 +646,14 @@ function LiveTablePredictorApp() {
   }, [autoPickSnapshot]);
 
   useEffect(() => {
+    if (autoPickCache === null) {
+      window.localStorage.removeItem("fifa-auto-pick-cache-v1");
+    } else {
+      window.localStorage.setItem("fifa-auto-pick-cache-v1", JSON.stringify(autoPickCache));
+    }
+  }, [autoPickCache]);
+
+  useEffect(() => {
     window.localStorage.setItem("fifa-score-predictions-v1", JSON.stringify(scorePredictions));
   }, [scorePredictions]);
 
@@ -674,6 +702,7 @@ function LiveTablePredictorApp() {
     });
     setBracketPicks({});
     setAutoPickSnapshot(null);
+    setAutoPickCache(null);
   }
 
   function moveThirdTeam(fromIndex: number, toIndex: number) {
@@ -686,6 +715,7 @@ function LiveTablePredictorApp() {
     });
     setBracketPicks({});
     setAutoPickSnapshot(null);
+    setAutoPickCache(null);
   }
 
   function saveGroupPredictions(groupId: string, groupPredictions: ScorePredictions) {
@@ -712,6 +742,7 @@ function LiveTablePredictorApp() {
     setThirdOrder(rankedThirds.map((team) => team.name));
     setBracketPicks({});
     setAutoPickSnapshot(null);
+    setAutoPickCache(null);
     setPredictionGroup(null);
   }
 
@@ -723,12 +754,19 @@ function LiveTablePredictorApp() {
     setPredictionGroup(null);
     setBracketPicks({});
     setAutoPickSnapshot(null);
+    setAutoPickCache(null);
   }
 
   function selectWinner(matchNumber: number, teamName: string) {
-    setBracketPicks((current) =>
-      sanitizeOfficialPicks({ ...current, [`m${matchNumber}`]: teamName }, roundOf32)
+    const pickKey = `m${matchNumber}`;
+    if (bracketPicks[pickKey] === teamName) return;
+
+    const manualBaseline = autoPickSnapshot ?? bracketPicks;
+    setBracketPicks(
+      sanitizeOfficialPicks({ ...manualBaseline, [pickKey]: teamName }, roundOf32)
     );
+    setAutoPickSnapshot(null);
+    setAutoPickCache(null);
   }
 
   function autoPickBracket() {
@@ -739,6 +777,12 @@ function LiveTablePredictorApp() {
     }
 
     const baseline = sanitizeOfficialPicks(bracketPicks, roundOf32);
+    if (autoPickCache && sameBracketPicks(autoPickCache.baseline, baseline)) {
+      setAutoPickSnapshot(baseline);
+      setBracketPicks(autoPickCache.generated);
+      return;
+    }
+
     const next: BracketPicks = { ...baseline };
     officialPickOrder.forEach((matchNumber) => {
       const pickKey = `m${matchNumber}`;
@@ -757,6 +801,7 @@ function LiveTablePredictorApp() {
       if (winner) next[pickKey] = winner.name;
     });
 
+    setAutoPickCache({ baseline, generated: next });
     setAutoPickSnapshot(baseline);
     setBracketPicks(next);
   }
@@ -764,6 +809,7 @@ function LiveTablePredictorApp() {
   function resetBracket() {
     setBracketPicks({});
     setAutoPickSnapshot(null);
+    setAutoPickCache(null);
   }
 
   return (
