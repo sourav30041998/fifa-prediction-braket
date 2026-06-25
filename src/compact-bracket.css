@@ -1,0 +1,401 @@
+.official-knockout-section {
+  width: min(100%, 1840px);
+  padding-inline: clamp(12px, 2vw, 28px);
+}
+
+.compact-champion-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: -8px 0 16px;
+  border: 1px solid rgba(18, 72, 223, 0.2);
+  border-radius: 8px;
+  background: linear-gradient(90deg, #eef3ff, white, #eef3ff);
+  padding: 10px 16px;
+  color: var(--royal);
+}
+
+.compact-champion-banner > span {
+  color: #68758a;
+  font-family: var(--display);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.compact-champion-banner strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-family: var(--display);
+  font-size: 21px;
+  font-weight: 900;
+}
+
+.compact-champion-banner .official-flag {
+  width: 31px;
+  height: 21px;
+}
+
+.official-bracket-shell {
+  display: grid;
+  width: 100%;
+  min-height: 650px;
+  grid-template-columns:
+    minmax(118px, 1.25fr)
+    minmax(108px, 1.06fr)
+    minmax(104px, 0.98fr)
+    minmax(100px, 0.92fr)
+    minmax(126px, 1.08fr)
+    minmax(100px, 0.92fr)
+    minmax(104px, 0.98fr)
+    minmax(108px, 1.06fr)
+    minmax(118px, 1.25fr);
+  gap: clamp(5px, 0.7vw, 12px);
+  overflow: hidden;
+  border: 1px solid #d8deea;
+  border-radius: 11px;
+  background:
+    radial-gradient(circle at 50% 45%, rgba(18, 72, 223, 0.075), transparent 25%),
+    linear-gradient(rgba(13, 39, 94, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(13, 39, 94, 0.025) 1px, transparent 1px),
+    white;
+  background-size: auto, 24px 24px, 24px 24px, auto;
+  box-shadow: 0 18px 45px rgba(8, 29, 67, 0.09);
+  padding: 16px clamp(8px, 1vw, 16px) 18px;
+}
+
+.compact-round,
+.bracket-centre-column {
+  display: grid;
+  min-width: 0;
+  grid-template-rows: 28px 1fr;
+}
+
+.compact-round > header,
+.bracket-centre-column > header {
+  display: grid;
+  place-items: center;
+  border-bottom: 2px solid #dfe4ed;
+  color: #536077;
+  font-family: var(--display);
+  font-size: clamp(9px, 0.8vw, 12px);
+  font-weight: 850;
+  letter-spacing: 0.025em;
+  text-align: center;
+}
+
+.bracket-centre-column > header {
+  border-color: var(--orange);
+  color: var(--deep-blue);
+}
+
+.compact-round-matches {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  justify-content: space-around;
+  gap: 4px;
+  padding-block: 5px;
+}
+
+.official-match-card {
+  position: relative;
+  z-index: 2;
+  overflow: visible;
+  flex: 0 0 auto;
+  border: 1px solid #cbd4e2;
+  border-radius: 5px;
+  background: white;
+  box-shadow: 0 4px 11px rgba(6, 27, 64, 0.075);
+}
+
+.official-match-card::after {
+  position: absolute;
+  z-index: -1;
+  top: 50%;
+  width: clamp(6px, 0.8vw, 13px);
+  height: 1px;
+  background: #b7c2d3;
+  content: "";
+}
+
+.compact-round-left .official-match-card::after {
+  left: 100%;
+}
+
+.compact-round-right .official-match-card::after {
+  right: 100%;
+}
+
+.compact-round-1 .official-match-card::after,
+.bracket-centre-column .official-match-card::after {
+  display: none;
+}
+
+.official-match-number {
+  display: block;
+  min-height: 13px;
+  border-bottom: 1px solid #edf0f5;
+  background: #f5f7fa;
+  padding: 2px 5px 1px;
+  color: #7c8799;
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-align: right;
+}
+
+.official-match-card button,
+.official-team-placeholder {
+  display: grid;
+  width: 100%;
+  min-height: 23px;
+  grid-template-columns: 19px 23px minmax(0, 1fr) 13px;
+  align-items: center;
+  gap: 3px;
+  border: 0;
+  border-bottom: 1px solid #edf0f5;
+  background: white;
+  padding: 1px 4px;
+  color: #1b273b;
+  text-align: left;
+}
+
+.official-match-card button:last-child,
+.official-team-placeholder:last-child {
+  border-bottom: 0;
+}
+
+.official-match-card button:hover {
+  background: #f0f4ff;
+}
+
+.official-match-card button.winner {
+  background: linear-gradient(90deg, #e7f7f1, #f8fffc);
+  color: #075e46;
+}
+
+.official-match-card button.loser {
+  color: #9aa3b1;
+  opacity: 0.55;
+}
+
+.official-slot-label {
+  color: #7c8799;
+  font-size: 7px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.official-match-card .official-flag {
+  width: 20px;
+  height: 14px;
+  border-radius: 2px;
+}
+
+.official-team-name {
+  overflow: hidden;
+  font-size: clamp(7px, 0.63vw, 9px);
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.official-match-card .winner-check {
+  display: grid;
+  width: 13px;
+  height: 13px;
+  place-items: center;
+  border-radius: 50%;
+}
+
+.official-match-card .winner .winner-check {
+  background: #0d9c72;
+  color: white;
+}
+
+.official-team-placeholder {
+  grid-template-columns: 22px 1fr;
+  color: #9da6b5;
+}
+
+.official-team-placeholder > span {
+  font-size: 7px;
+  font-weight: 900;
+}
+
+.official-team-placeholder em {
+  overflow: hidden;
+  font-size: 7px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bracket-centre-column {
+  position: relative;
+}
+
+.centre-final,
+.centre-third-place {
+  position: absolute;
+  right: 0;
+  left: 0;
+}
+
+.centre-final {
+  top: 29%;
+}
+
+.centre-third-place {
+  top: 61%;
+}
+
+.centre-third-place > span {
+  display: block;
+  margin-bottom: 5px;
+  color: #68758a;
+  font-family: var(--display);
+  font-size: 9px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.official-match-card.featured {
+  border-color: #7796e8;
+  box-shadow: 0 8px 24px rgba(18, 72, 223, 0.17);
+}
+
+.official-match-card.featured .official-match-number {
+  background: var(--deep-blue);
+  color: white;
+}
+
+.official-bracket-note {
+  margin: 11px 0 0;
+  color: #748095;
+  font-size: 10px;
+  font-weight: 650;
+  text-align: center;
+}
+
+.official-bracket-note a {
+  color: var(--royal);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+@media (max-width: 1180px) {
+  .official-bracket-shell {
+    min-height: 610px;
+    grid-template-columns:
+      minmax(100px, 1.2fr)
+      minmax(92px, 1fr)
+      minmax(88px, 0.95fr)
+      minmax(84px, 0.9fr)
+      minmax(108px, 1fr)
+      minmax(84px, 0.9fr)
+      minmax(88px, 0.95fr)
+      minmax(92px, 1fr)
+      minmax(100px, 1.2fr);
+    gap: 4px;
+    padding-inline: 6px;
+  }
+
+  .official-team-name {
+    font-size: 7px;
+  }
+
+  .official-match-card button,
+  .official-team-placeholder {
+    grid-template-columns: 17px 20px minmax(0, 1fr) 12px;
+    padding-inline: 2px;
+  }
+}
+
+@media (max-width: 900px) {
+  .official-bracket-shell {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    gap: 18px;
+    overflow: visible;
+    padding: 14px;
+  }
+
+  .compact-round,
+  .bracket-centre-column {
+    display: block;
+  }
+
+  .compact-round > header,
+  .bracket-centre-column > header {
+    min-height: 28px;
+    margin-bottom: 8px;
+    font-size: 13px;
+  }
+
+  .compact-round-matches {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 0;
+  }
+
+  .compact-round-1 .compact-round-matches {
+    grid-template-columns: 1fr;
+  }
+
+  .official-match-card::after {
+    display: none;
+  }
+
+  .official-match-card button,
+  .official-team-placeholder {
+    min-height: 31px;
+    grid-template-columns: 25px 29px minmax(0, 1fr) 18px;
+    padding-inline: 7px;
+  }
+
+  .official-match-card .official-flag {
+    width: 26px;
+    height: 18px;
+  }
+
+  .official-team-name,
+  .official-team-placeholder em {
+    font-size: 10px;
+  }
+
+  .official-slot-label,
+  .official-team-placeholder > span {
+    font-size: 8px;
+  }
+
+  .bracket-centre-column {
+    order: 10;
+  }
+
+  .centre-final,
+  .centre-third-place {
+    position: static;
+    margin: 12px auto;
+  }
+
+
+}
+
+@media (max-width: 560px) {
+  .compact-round-matches {
+    grid-template-columns: 1fr;
+  }
+
+  .compact-champion-banner {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+}

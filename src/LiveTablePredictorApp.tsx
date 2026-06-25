@@ -26,6 +26,7 @@ import {
   UserCircle,
   X
 } from "lucide-react";
+import { getAnnexCAllocation } from "./fifaAnnexC";
 
 type Team = {
   name: string;
@@ -72,6 +73,8 @@ type FifaStanding = {
 
 const fifaStandingsPage =
   "https://www.fifa.com/en/tournaments/mens/worldcup/canadamexicousa2026/standings";
+const fifaRegulationsUrl =
+  "https://digitalhub.fifa.com/m/636f5c9c6f29771f/original/FWC2026_regulations_EN.pdf";
 const fifaStandingsApi =
   "https://api.fifa.com/api/v3/calendar/17/285023/289273/standing?language=en&count=500";
 const flagUrl = (code: string) =>
@@ -97,7 +100,6 @@ const groups: Group[] = groupData.map(([id, teams]) => ({
   teams: teams.map(([name, code]) => ({ name, code, groupId: id }))
 }));
 const allTeams = groups.flatMap((group) => group.teams);
-const rounds = ["Round of 32", "Round of 16", "Quarterfinals", "Semifinals", "Final"];
 const emptyStats: TeamStats = { mp: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0, gd: 0, pts: 0 };
 const statColumns: Array<{ key: keyof TeamStats; label: string; title: string }> = [
   { key: "mp", label: "MP", title: "Matches played" },
@@ -194,24 +196,140 @@ function parseFifaStandings(rows: FifaStanding[]) {
   ) as StatsMap;
 }
 
-function seedRoundOf32(groupOrder: GroupOrder, thirdOrder: string[]) {
-  const winners = groups.map((group) => findTeam(groupOrder[group.id][0])!);
-  const runnersUp = groups.map((group) => findTeam(groupOrder[group.id][1])!);
-  const bestThird = thirdOrder.slice(0, 8).map((name) => findTeam(name)!);
-  const seeds = [...winners, ...runnersUp.slice(8)];
-  const available = [...bestThird, ...runnersUp.slice(0, 8)];
-  const bracket: Team[] = [];
+type OfficialMatch = {
+  number: number;
+  teams: [Team | undefined, Team | undefined];
+  labels: [string, string];
+};
 
-  seeds.forEach((seed) => {
-    let opponentIndex = available.findIndex((candidate) => candidate.groupId !== seed.groupId);
-    if (opponentIndex < 0) opponentIndex = 0;
-    const [opponent] = available.splice(opponentIndex, 1);
-    bracket.push(seed, opponent);
-  });
+const roundOf16Sources: Record<number, [number, number]> = {
+  89: [73, 75],
+  90: [74, 77],
+  91: [76, 78],
+  92: [79, 80],
+  93: [83, 84],
+  94: [81, 82],
+  95: [86, 88],
+  96: [85, 87]
+};
 
-  return bracket;
+const quarterFinalSources: Record<number, [number, number]> = {
+  97: [89, 90],
+  98: [93, 94],
+  99: [91, 92],
+  100: [95, 96]
+};
+
+const semiFinalSources: Record<number, [number, number]> = {
+  101: [97, 98],
+  102: [99, 100]
+};
+
+const officialPickOrder = [
+  73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88,
+  89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104
+];
+
+const leftBracketMatches = {
+  round32: [74, 77, 73, 75, 83, 84, 81, 82],
+  round16: [90, 89, 93, 94],
+  quarterFinals: [97, 98],
+  semiFinals: [101]
+};
+
+const rightBracketMatches = {
+  round32: [76, 78, 79, 80, 86, 88, 85, 87],
+  round16: [91, 92, 95, 96],
+  quarterFinals: [99, 100],
+  semiFinals: [102]
+};
+
+function buildRoundOf32(groupOrder: GroupOrder, thirdOrder: string[]) {
+  const position = (groupId: string, index: number) => findTeam(groupOrder[groupId][index]);
+  const thirdByGroup = Object.fromEntries(
+    groups.map((group) => [group.id, position(group.id, 2)])
+  ) as Record<string, Team | undefined>;
+  const qualifyingThirdGroups = thirdOrder
+    .slice(0, 8)
+    .map((teamName) => findTeam(teamName)?.groupId)
+    .filter((groupId): groupId is string => Boolean(groupId));
+  const annexC = getAnnexCAllocation(qualifyingThirdGroups);
+  const thirdOpponent = (winnerGroup: keyof typeof annexC) => thirdByGroup[annexC[winnerGroup]];
+  const match = (
+    number: number,
+    teamA: Team | undefined,
+    teamB: Team | undefined,
+    labelA: string,
+    labelB: string
+  ): OfficialMatch => ({ number, teams: [teamA, teamB], labels: [labelA, labelB] });
+
+  return new Map<number, OfficialMatch>([
+    [73, match(73, position("A", 1), position("B", 1), "2A", "2B")],
+    [74, match(74, position("E", 0), thirdOpponent("E"), "1E", `3${annexC.E}`)],
+    [75, match(75, position("F", 0), position("C", 1), "1F", "2C")],
+    [76, match(76, position("C", 0), position("F", 1), "1C", "2F")],
+    [77, match(77, position("I", 0), thirdOpponent("I"), "1I", `3${annexC.I}`)],
+    [78, match(78, position("E", 1), position("I", 1), "2E", "2I")],
+    [79, match(79, position("A", 0), thirdOpponent("A"), "1A", `3${annexC.A}`)],
+    [80, match(80, position("L", 0), thirdOpponent("L"), "1L", `3${annexC.L}`)],
+    [81, match(81, position("D", 0), thirdOpponent("D"), "1D", `3${annexC.D}`)],
+    [82, match(82, position("G", 0), thirdOpponent("G"), "1G", `3${annexC.G}`)],
+    [83, match(83, position("K", 1), position("L", 1), "2K", "2L")],
+    [84, match(84, position("H", 0), position("J", 1), "1H", "2J")],
+    [85, match(85, position("B", 0), thirdOpponent("B"), "1B", `3${annexC.B}`)],
+    [86, match(86, position("J", 0), position("H", 1), "1J", "2H")],
+    [87, match(87, position("K", 0), thirdOpponent("K"), "1K", `3${annexC.K}`)],
+    [88, match(88, position("D", 1), position("G", 1), "2D", "2G")]
+  ]);
 }
 
+function resolveOfficialMatch(
+  matchNumber: number,
+  roundOf32: Map<number, OfficialMatch>,
+  picks: BracketPicks
+): OfficialMatch {
+  const firstRound = roundOf32.get(matchNumber);
+  if (firstRound) return firstRound;
+
+  if (matchNumber === 103) {
+    return {
+      number: 103,
+      teams: [getMatchLoser(101, roundOf32, picks), getMatchLoser(102, roundOf32, picks)],
+      labels: ["RU101", "RU102"]
+    };
+  }
+
+  const sources =
+    roundOf16Sources[matchNumber] ??
+    quarterFinalSources[matchNumber] ??
+    semiFinalSources[matchNumber] ??
+    (matchNumber === 104 ? [101, 102] : undefined);
+  if (!sources) return { number: matchNumber, teams: [undefined, undefined], labels: ["TBD", "TBD"] };
+
+  return {
+    number: matchNumber,
+    teams: [findTeam(picks[`m${sources[0]}`]), findTeam(picks[`m${sources[1]}`])],
+    labels: [`W${sources[0]}`, `W${sources[1]}`]
+  };
+}
+
+function getMatchLoser(matchNumber: number, roundOf32: Map<number, OfficialMatch>, picks: BracketPicks) {
+  const match = resolveOfficialMatch(matchNumber, roundOf32, picks);
+  const winner = picks[`m${matchNumber}`];
+  if (!winner) return undefined;
+  return match.teams.find((team) => team && team.name !== winner);
+}
+
+function sanitizeOfficialPicks(picks: BracketPicks, roundOf32: Map<number, OfficialMatch>) {
+  const next: BracketPicks = {};
+  officialPickOrder.forEach((matchNumber) => {
+    const selected = picks[`m${matchNumber}`];
+    if (!selected) return;
+    const match = resolveOfficialMatch(matchNumber, roundOf32, next);
+    if (match.teams.some((team) => team?.name === selected)) next[`m${matchNumber}`] = selected;
+  });
+  return next;
+}
 function LiveTablePredictorApp() {
   const initialOrder = useMemo(loadGroupOrder, []);
   const cache = useMemo(loadCachedStats, []);
@@ -288,12 +406,19 @@ function LiveTablePredictorApp() {
   }, [bracketPicks]);
 
   const bestThirdNames = new Set(thirdOrder.slice(0, 8));
-  const qualifiers = useMemo(
-    () => seedRoundOf32(groupOrder, thirdOrder),
+  const roundOf32 = useMemo(
+    () => buildRoundOf32(groupOrder, thirdOrder),
     [groupOrder, thirdOrder]
   );
-  const champion = findTeam(bracketPicks.r4m0);
-  const knockoutPickCount = Object.keys(bracketPicks).length;
+  const champion = findTeam(bracketPicks.m104);
+  const knockoutPickCount = officialPickOrder.filter((matchNumber) => bracketPicks[`m${matchNumber}`]).length;
+
+  useEffect(() => {
+    setBracketPicks((current) => {
+      const sanitized = sanitizeOfficialPicks(current, roundOf32);
+      return JSON.stringify(sanitized) === JSON.stringify(current) ? current : sanitized;
+    });
+  }, [roundOf32]);
 
   function switchView(nextView: View) {
     setView(nextView);
@@ -329,31 +454,18 @@ function LiveTablePredictorApp() {
     setBracketPicks({});
   }
 
-  function selectWinner(roundIndex: number, matchIndex: number, teamName: string) {
-    setBracketPicks((current) => {
-      const next = { ...current, [`r${roundIndex}m${matchIndex}`]: teamName };
-      for (let laterRound = roundIndex + 1; laterRound < rounds.length; laterRound += 1) {
-        Object.keys(next)
-          .filter((key) => key.startsWith(`r${laterRound}m`))
-          .forEach((key) => delete next[key]);
-      }
-      return next;
-    });
+  function selectWinner(matchNumber: number, teamName: string) {
+    setBracketPicks((current) =>
+      sanitizeOfficialPicks({ ...current, [`m${matchNumber}`]: teamName }, roundOf32)
+    );
   }
 
   function autoPickBracket() {
     const next: BracketPicks = {};
-    let currentTeams: Array<Team | undefined> = qualifiers;
-    rounds.forEach((_, roundIndex) => {
-      const winners: Array<Team | undefined> = [];
-      for (let matchIndex = 0; matchIndex < currentTeams.length / 2; matchIndex += 1) {
-        const teamA = currentTeams[matchIndex * 2];
-        const teamB = currentTeams[matchIndex * 2 + 1];
-        const winner = (matchIndex + roundIndex) % 3 === 0 ? teamB ?? teamA : teamA ?? teamB;
-        if (winner) next[`r${roundIndex}m${matchIndex}`] = winner.name;
-        winners.push(winner);
-      }
-      currentTeams = winners;
+    officialPickOrder.forEach((matchNumber, index) => {
+      const match = resolveOfficialMatch(matchNumber, roundOf32, next);
+      const winner = match.teams[(index + matchNumber) % 3 === 0 ? 1 : 0] ?? match.teams[0] ?? match.teams[1];
+      if (winner) next[`m${matchNumber}`] = winner.name;
     });
     setBracketPicks(next);
   }
@@ -400,7 +512,7 @@ function LiveTablePredictorApp() {
           />
         ) : (
           <KnockoutStage
-            qualifiers={qualifiers}
+            roundOf32={roundOf32}
             picks={bracketPicks}
             champion={champion}
             onPick={selectWinner}
@@ -478,7 +590,7 @@ function Hero({ view, champion }: { view: View; champion?: Team }) {
 function ProgressBar({ view, knockoutPickCount, champion }: { view: View; knockoutPickCount: number; champion?: Team }) {
   const steps = [
     { label: "Group Predictor", complete: true, active: view === "groups" },
-    { label: "Round of 32", complete: knockoutPickCount === 31, active: view === "bracket" && !champion },
+    { label: "Round of 32", complete: knockoutPickCount === 32, active: view === "bracket" && !champion },
     { label: "Champion", complete: Boolean(champion), active: Boolean(champion) }
   ];
   return (
@@ -704,7 +816,7 @@ function Flag({ team, className = "" }: { team: Team; className?: string }) {
 }
 
 function KnockoutStage({
-  qualifiers,
+  roundOf32,
   picks,
   champion,
   onPick,
@@ -712,85 +824,140 @@ function KnockoutStage({
   onReset,
   onBack
 }: {
-  qualifiers: Team[];
+  roundOf32: Map<number, OfficialMatch>;
   picks: BracketPicks;
   champion?: Team;
-  onPick: (roundIndex: number, matchIndex: number, teamName: string) => void;
+  onPick: (matchNumber: number, teamName: string) => void;
   onAutoPick: () => void;
   onReset: () => void;
   onBack: () => void;
 }) {
-  function getRoundTeams(roundIndex: number): Array<Team | undefined> {
-    if (roundIndex === 0) return qualifiers;
-    return Array.from({ length: 32 / 2 ** roundIndex }, (_, index) =>
-      findTeam(picks[`r${roundIndex - 1}m${index}`])
-    );
-  }
   return (
-    <section className="content-section knockout-section">
+    <section className="content-section official-knockout-section">
       <header className="section-heading bracket-heading">
-        <div><span className="eyebrow">STEP 2 OF 3</span><h2>Pick every winner</h2><p>Your predicted qualifiers now fill the Round of 32.</p></div>
+        <div>
+          <span className="eyebrow">OFFICIAL FIFA PATH · M73–M104</span>
+          <h2>Knockout bracket</h2>
+          <p>
+            Round-of-32 slots follow FIFA Annex C, and every winner advances through the official match-number path.
+          </p>
+        </div>
         <div className="bracket-tools">
           <button className="secondary-button" onClick={onBack} type="button"><ArrowLeft size={17} /> Predictor</button>
           <button className="secondary-button accent" onClick={onAutoPick} type="button"><Sparkles size={17} /> Auto-pick</button>
           <button className="secondary-button" onClick={onReset} type="button"><RotateCcw size={17} /> Reset</button>
         </div>
       </header>
+
       {champion && (
-        <article className="champion-banner">
-          <div className="trophy-orbit"><Trophy size={43} /></div>
-          <div><span>YOUR 2026 CHAMPION</span><strong className="champion-team"><Flag team={champion} /> {champion.name}</strong><p>A complete bracket, all the way to the final whistle.</p></div>
-          <button className="primary-button" onClick={onReset} type="button">Make new picks</button>
+        <article className="compact-champion-banner">
+          <Trophy size={28} />
+          <span>Your champion</span>
+          <strong><Flag team={champion} /> {champion.name}</strong>
         </article>
       )}
-      <div className="bracket-scroll">
-        <div className="bracket-board">
-          {rounds.map((round, roundIndex) => {
-            const roundTeams = getRoundTeams(roundIndex);
-            return (
-              <section className={`round-column round-${roundIndex}`} key={round}>
-                <header><span>ROUND {roundIndex + 1}</span><strong>{round}</strong></header>
-                <div className="round-matches">
-                  {Array.from({ length: 16 / 2 ** roundIndex }, (_, matchIndex) => (
-                    <MatchCard
-                      key={`${round}-${matchIndex}`}
-                      matchNumber={matchIndex + 1}
-                      selected={picks[`r${roundIndex}m${matchIndex}`]}
-                      teamA={roundTeams[matchIndex * 2]}
-                      teamB={roundTeams[matchIndex * 2 + 1]}
-                      onPick={(teamName) => onPick(roundIndex, matchIndex, teamName)}
-                    />
-                  ))}
-                </div>
-              </section>
-            );
-          })}
-        </div>
+
+      <div className="official-bracket-shell" aria-label="FIFA World Cup 2026 knockout bracket">
+        <CompactRound title="Round of 32" numbers={leftBracketMatches.round32} roundOf32={roundOf32} picks={picks} onPick={onPick} side="left" />
+        <CompactRound title="Round of 16" numbers={leftBracketMatches.round16} roundOf32={roundOf32} picks={picks} onPick={onPick} side="left" />
+        <CompactRound title="Quarter-final" numbers={leftBracketMatches.quarterFinals} roundOf32={roundOf32} picks={picks} onPick={onPick} side="left" />
+        <CompactRound title="Semi-final" numbers={leftBracketMatches.semiFinals} roundOf32={roundOf32} picks={picks} onPick={onPick} side="left" />
+
+        <section className="bracket-centre-column">
+          <header>Finals</header>
+          <div className="centre-final">
+            <OfficialMatchCard match={resolveOfficialMatch(104, roundOf32, picks)} selected={picks.m104} onPick={onPick} featured />
+          </div>
+          <div className="centre-third-place">
+            <span>Play-off for third place</span>
+            <OfficialMatchCard match={resolveOfficialMatch(103, roundOf32, picks)} selected={picks.m103} onPick={onPick} />
+          </div>
+        </section>
+
+        <CompactRound title="Semi-final" numbers={rightBracketMatches.semiFinals} roundOf32={roundOf32} picks={picks} onPick={onPick} side="right" />
+        <CompactRound title="Quarter-final" numbers={rightBracketMatches.quarterFinals} roundOf32={roundOf32} picks={picks} onPick={onPick} side="right" />
+        <CompactRound title="Round of 16" numbers={rightBracketMatches.round16} roundOf32={roundOf32} picks={picks} onPick={onPick} side="right" />
+        <CompactRound title="Round of 32" numbers={rightBracketMatches.round32} roundOf32={roundOf32} picks={picks} onPick={onPick} side="right" />
       </div>
-      <p className="scroll-hint">Scroll horizontally to follow the bracket →</p>
+
+      <p className="official-bracket-note">
+        Third-place opponents are assigned from the exact eight qualifying groups using the
+        <a href={fifaRegulationsUrl} target="_blank" rel="noreferrer"> FIFA World Cup 2026 Regulations, Annex C</a>.
+      </p>
     </section>
   );
 }
 
-function MatchCard({ matchNumber, teamA, teamB, selected, onPick }: { matchNumber: number; teamA?: Team; teamB?: Team; selected?: string; onPick: (teamName: string) => void }) {
+function CompactRound({
+  title,
+  numbers,
+  roundOf32,
+  picks,
+  onPick,
+  side
+}: {
+  title: string;
+  numbers: number[];
+  roundOf32: Map<number, OfficialMatch>;
+  picks: BracketPicks;
+  onPick: (matchNumber: number, teamName: string) => void;
+  side: "left" | "right";
+}) {
   return (
-    <article className={`match-card ${selected ? "decided" : ""}`}>
-      <span className="match-label">MATCH {String(matchNumber).padStart(2, "0")}</span>
-      {[teamA, teamB].map((team, index) =>
+    <section className={`compact-round compact-round-${side} compact-round-${numbers.length}`}>
+      <header>{title}</header>
+      <div className="compact-round-matches">
+        {numbers.map((matchNumber) => (
+          <OfficialMatchCard
+            key={matchNumber}
+            match={resolveOfficialMatch(matchNumber, roundOf32, picks)}
+            selected={picks[`m${matchNumber}`]}
+            onPick={onPick}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function OfficialMatchCard({
+  match,
+  selected,
+  onPick,
+  featured = false
+}: {
+  match: OfficialMatch;
+  selected?: string;
+  onPick: (matchNumber: number, teamName: string) => void;
+  featured?: boolean;
+}) {
+  return (
+    <article className={`official-match-card ${selected ? "decided" : ""} ${featured ? "featured" : ""}`}>
+      <span className="official-match-number">M{match.number}</span>
+      {match.teams.map((team, index) =>
         team ? (
-          <button aria-pressed={selected === team.name} className={selected === team.name ? "winner" : selected ? "loser" : ""} key={team.name} onClick={() => onPick(team.name)} type="button">
-            <Flag team={team} className="bracket-flag" />
-            <span className="match-team-name">{team.name}</span>
-            <span className="winner-check">{selected === team.name && <Check size={14} />}</span>
+          <button
+            aria-pressed={selected === team.name}
+            className={selected === team.name ? "winner" : selected ? "loser" : ""}
+            key={`${match.number}-${team.name}`}
+            onClick={() => onPick(match.number, team.name)}
+            type="button"
+          >
+            <span className="official-slot-label">{match.labels[index]}</span>
+            <Flag team={team} />
+            <span className="official-team-name">{team.name}</span>
+            <span className="winner-check">{selected === team.name && <Check size={11} />}</span>
           </button>
         ) : (
-          <div className="team-placeholder" key={`placeholder-${index}`}><span /><em>Awaiting winner</em></div>
+          <div className="official-team-placeholder" key={`${match.number}-${index}`}>
+            <span>{match.labels[index]}</span>
+            <em>Awaiting winner</em>
+          </div>
         )
       )}
     </article>
   );
 }
-
 function GuideModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
