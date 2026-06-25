@@ -825,6 +825,12 @@ a {
   color: var(--royal);
 }
 
+.secondary-button.accent.undo-auto-picks {
+  border-color: #e7a16d;
+  background: #fff3e9;
+  color: #a74309;
+}
+
 .bracket-heading {
   align-items: center;
 }

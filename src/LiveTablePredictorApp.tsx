@@ -27,6 +27,7 @@ import {
   X
 } from "lucide-react";
 import { getAnnexCAllocation } from "./fifaAnnexC";
+import { pickProbableWinner, type PredictionRanking } from "./autoPickModel";
 
 type Team = {
   name: string;
@@ -52,6 +53,7 @@ type TeamStats = {
 
 type GroupOrder = Record<string, string[]>;
 type StatsMap = Record<string, TeamStats>;
+type RankingMap = Record<string, PredictionRanking>;
 type BracketPicks = Record<string, string>;
 type View = "groups" | "bracket";
 type FeedState = "loading" | "live" | "cached" | "error";
@@ -65,6 +67,12 @@ type FifaMatchResult = {
   AwayTeamScore: number | null;
   HomeTeamId: string;
   AwayTeamId: string;
+};
+
+type FifaRanking = {
+  Rank: number;
+  TotalPoints: number;
+  IdCountry: string;
 };
 
 type FifaStanding = {
@@ -105,6 +113,8 @@ const fifaRegulationsUrl =
   "https://digitalhub.fifa.com/m/636f5c9c6f29771f/original/FWC2026_regulations_EN.pdf";
 const fifaStandingsApi =
   "https://api.fifa.com/api/v3/calendar/17/285023/289273/standing?language=en&count=500";
+const fifaRankingsApi =
+  "https://api.fifa.com/api/v3/fifarankings/rankings/live?gender=1&sportType=0&language=en";
 const flagUrl = (code: string) =>
   `https://api.fifa.com/api/v3/picture/flags-sq-2/${code}`;
 
@@ -190,6 +200,26 @@ function loadBracketPicks(): BracketPicks {
     );
   } catch {
     return {};
+  }
+}
+
+function loadAutoPickSnapshot(): BracketPicks | null {
+  try {
+    const saved = window.localStorage.getItem("fifa-auto-pick-snapshot-v1");
+    return saved ? JSON.parse(saved) : null;
+  } catch {
+    return null;
+  }
+}
+
+function loadCachedRankings(): { rankings: RankingMap; updatedAt: string | null } {
+  try {
+    return JSON.parse(
+      window.localStorage.getItem("fifa-ranking-cache-v1") ??
+        '{"rankings":{},"updatedAt":null}'
+    );
+  } catch {
+    return { rankings: {}, updatedAt: null };
   }
 }
 
@@ -464,11 +494,14 @@ function sanitizeOfficialPicks(picks: BracketPicks, roundOf32: Map<number, Offic
 function LiveTablePredictorApp() {
   const initialOrder = useMemo(loadGroupOrder, []);
   const cache = useMemo(loadCachedStats, []);
+  const rankingCache = useMemo(loadCachedRankings, []);
   const [view, setView] = useState<View>("groups");
   const [groupOrder, setGroupOrder] = useState<GroupOrder>(initialOrder);
   const [thirdOrder, setThirdOrder] = useState(() => loadThirdOrder(initialOrder));
   const [bracketPicks, setBracketPicks] = useState<BracketPicks>(loadBracketPicks);
+  const [autoPickSnapshot, setAutoPickSnapshot] = useState<BracketPicks | null>(loadAutoPickSnapshot);
   const [stats, setStats] = useState<StatsMap>(cache.stats);
+  const [rankings, setRankings] = useState<RankingMap>(rankingCache.rankings);
   const [fixtures, setFixtures] = useState<GroupFixture[]>(loadCachedFixtures);
   const [scorePredictions, setScorePredictions] = useState<ScorePredictions>(loadScorePredictions);
   const [predictionGroup, setPredictionGroup] = useState<string | null>(null);
@@ -508,6 +541,34 @@ function LiveTablePredictorApp() {
     }
   }, []);
 
+  const refreshRankings = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const response = await fetch(fifaRankingsApi, {
+        headers: { Accept: "application/json" },
+        signal
+      });
+      if (!response.ok) throw new Error(`FIFA rankings returned ${response.status}`);
+      const payload = (await response.json()) as { Results?: FifaRanking[] };
+      const nextRankings = Object.fromEntries(
+        (payload.Results ?? [])
+          .filter((entry) => entry.IdCountry && entry.Rank && entry.TotalPoints)
+          .map((entry) => [
+            entry.IdCountry,
+            { rank: entry.Rank, points: entry.TotalPoints }
+          ])
+      ) as RankingMap;
+      if (Object.keys(nextRankings).length < 48) throw new Error("Incomplete FIFA ranking response");
+      const updatedAt = new Date().toISOString();
+      setRankings(nextRankings);
+      window.localStorage.setItem(
+        "fifa-ranking-cache-v1",
+        JSON.stringify({ rankings: nextRankings, updatedAt })
+      );
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+    }
+  }, []);
+
   useEffect(() => {
     const controller = new AbortController();
     void refreshStandings(controller.signal);
@@ -517,6 +578,16 @@ function LiveTablePredictorApp() {
       window.clearInterval(interval);
     };
   }, [refreshStandings]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void refreshRankings(controller.signal);
+    const interval = window.setInterval(() => void refreshRankings(), 15 * 60_000);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+    };
+  }, [refreshRankings]);
 
   const currentThirdNames = useMemo(
     () => groups.map((group) => groupOrder[group.id][2]),
@@ -543,12 +614,30 @@ function LiveTablePredictorApp() {
   }, [bracketPicks]);
 
   useEffect(() => {
+    if (autoPickSnapshot === null) {
+      window.localStorage.removeItem("fifa-auto-pick-snapshot-v1");
+    } else {
+      window.localStorage.setItem("fifa-auto-pick-snapshot-v1", JSON.stringify(autoPickSnapshot));
+    }
+  }, [autoPickSnapshot]);
+
+  useEffect(() => {
     window.localStorage.setItem("fifa-score-predictions-v1", JSON.stringify(scorePredictions));
   }, [scorePredictions]);
 
   const projectedStats = useMemo(
     () => fixtures.length ? calculateProjectedStats(fixtures, scorePredictions) : stats,
     [fixtures, scorePredictions, stats]
+  );
+  const groupPositions = useMemo(
+    () => Object.fromEntries(
+      groups.flatMap((group) => groupOrder[group.id].map((teamName, index) => [teamName, index + 1]))
+    ) as Record<string, number>,
+    [groupOrder]
+  );
+  const predictionContext = useMemo(
+    () => ({ stats: projectedStats, rankings, groupPositions }),
+    [projectedStats, rankings, groupPositions]
   );
 
   const bestThirdNames = new Set(thirdOrder.slice(0, 8));
@@ -580,6 +669,7 @@ function LiveTablePredictorApp() {
       return { ...current, [groupId]: nextGroup };
     });
     setBracketPicks({});
+    setAutoPickSnapshot(null);
   }
 
   function moveThirdTeam(fromIndex: number, toIndex: number) {
@@ -591,6 +681,7 @@ function LiveTablePredictorApp() {
       return next;
     });
     setBracketPicks({});
+    setAutoPickSnapshot(null);
   }
 
   function saveGroupPredictions(groupId: string, groupPredictions: ScorePredictions) {
@@ -616,6 +707,7 @@ function LiveTablePredictorApp() {
     setGroupOrder(nextGroupOrder);
     setThirdOrder(rankedThirds.map((team) => team.name));
     setBracketPicks({});
+    setAutoPickSnapshot(null);
     setPredictionGroup(null);
   }
 
@@ -626,6 +718,7 @@ function LiveTablePredictorApp() {
     setScorePredictions({});
     setPredictionGroup(null);
     setBracketPicks({});
+    setAutoPickSnapshot(null);
   }
 
   function selectWinner(matchNumber: number, teamName: string) {
@@ -635,13 +728,33 @@ function LiveTablePredictorApp() {
   }
 
   function autoPickBracket() {
-    const next: BracketPicks = {};
-    officialPickOrder.forEach((matchNumber, index) => {
+    if (autoPickSnapshot !== null) {
+      setBracketPicks(autoPickSnapshot);
+      setAutoPickSnapshot(null);
+      return;
+    }
+
+    const baseline = sanitizeOfficialPicks(bracketPicks, roundOf32);
+    const next: BracketPicks = { ...baseline };
+    officialPickOrder.forEach((matchNumber) => {
+      const pickKey = `m${matchNumber}`;
+      if (next[pickKey]) return;
+
       const match = resolveOfficialMatch(matchNumber, roundOf32, next);
-      const winner = match.teams[(index + matchNumber) % 3 === 0 ? 1 : 0] ?? match.teams[0] ?? match.teams[1];
-      if (winner) next[`m${matchNumber}`] = winner.name;
+      const [teamA, teamB] = match.teams;
+      const winner = teamA && teamB
+        ? pickProbableWinner(teamA, teamB, predictionContext).winner
+        : teamA ?? teamB;
+      if (winner) next[pickKey] = winner.name;
     });
+
+    setAutoPickSnapshot(baseline);
     setBracketPicks(next);
+  }
+
+  function resetBracket() {
+    setBracketPicks({});
+    setAutoPickSnapshot(null);
   }
 
   return (
@@ -693,7 +806,8 @@ function LiveTablePredictorApp() {
             champion={champion}
             onPick={selectWinner}
             onAutoPick={autoPickBracket}
-            onReset={() => setBracketPicks({})}
+            autoPickActive={autoPickSnapshot !== null}
+            onReset={resetBracket}
             onBack={() => switchView("groups")}
           />
         )}
@@ -1029,6 +1143,7 @@ function KnockoutStage({
   champion,
   onPick,
   onAutoPick,
+  autoPickActive,
   onReset,
   onBack
 }: {
@@ -1037,6 +1152,7 @@ function KnockoutStage({
   champion?: Team;
   onPick: (matchNumber: number, teamName: string) => void;
   onAutoPick: () => void;
+  autoPickActive: boolean;
   onReset: () => void;
   onBack: () => void;
 }) {
@@ -1047,12 +1163,20 @@ function KnockoutStage({
           <span className="eyebrow">OFFICIAL FIFA PATH · M73–M104</span>
           <h2>Knockout bracket</h2>
           <p>
-            Round-of-32 slots follow FIFA Annex C, and every winner advances through the official match-number path.
+            Round-of-32 slots follow FIFA Annex C. Auto-pick preserves your manual choices and models only the remaining matches.
           </p>
         </div>
         <div className="bracket-tools">
           <button className="secondary-button" onClick={onBack} type="button"><ArrowLeft size={17} /> Predictor</button>
-          <button className="secondary-button accent" onClick={onAutoPick} type="button"><Sparkles size={17} /> Auto-pick</button>
+          <button
+            className={`secondary-button accent ${autoPickActive ? "undo-auto-picks" : ""}`}
+            onClick={onAutoPick}
+            title={autoPickActive ? "Restore your bracket to the point before auto-pick" : "Predict remaining matches from live form and FIFA ranking"}
+            type="button"
+          >
+            {autoPickActive ? <RotateCcw size={17} /> : <Sparkles size={17} />}
+            {autoPickActive ? "Undo auto-picks" : "Auto-pick remaining"}
+          </button>
           <button className="secondary-button" onClick={onReset} type="button"><RotateCcw size={17} /> Reset</button>
         </div>
       </header>
