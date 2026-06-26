@@ -269,6 +269,14 @@ function loadScorePredictions(): ScorePredictions {
   }
 }
 
+function loadManualSimulationMode() {
+  try {
+    return window.localStorage.getItem("fifa-manual-simulation-mode-v1") === "true";
+  } catch {
+    return false;
+  }
+}
+
 function parseFifaFixtures(rows: FifaStanding[]) {
   const teamCodeById = Object.fromEntries(
     rows.flatMap((row) => row.Team?.IdTeam && row.Team.IdCountry ? [[row.Team.IdTeam, row.Team.IdCountry]] : [])
@@ -365,6 +373,20 @@ function buildRankedGroupOrderFromStats(stats: StatsMap): GroupOrder {
         .map((team) => team.name)
     ])
   ) as GroupOrder;
+}
+
+function rankThirdNamesForOrder(order: GroupOrder, stats: StatsMap) {
+  return groups
+    .map((group) => findTeam(order[group.id]?.[2]))
+    .filter((team): team is Team => Boolean(team))
+    .sort((left, right) => compareTeamsByProjectedStats(left, right, stats))
+    .map((team) => team.name);
+}
+
+function thirdNamesForOrder(order: GroupOrder) {
+  return groups
+    .map((group) => order[group.id]?.[2])
+    .filter((teamName): teamName is string => Boolean(teamName));
 }
 
 function groupOrderKey(order: GroupOrder) {
@@ -1017,6 +1039,7 @@ function LiveTablePredictorApp() {
   const [rankings, setRankings] = useState<RankingMap>(rankingCache.rankings);
   const [fixtures, setFixtures] = useState<GroupFixture[]>(loadCachedFixtures);
   const [scorePredictions, setScorePredictions] = useState<ScorePredictions>(loadScorePredictions);
+  const [manualSimulationMode, setManualSimulationMode] = useState(loadManualSimulationMode);
   const [predictionGroup, setPredictionGroup] = useState<string | null>(null);
   const [opponentPreviewGroup, setOpponentPreviewGroup] = useState<string | null>(null);
   const [feedState, setFeedState] = useState<FeedState>(
@@ -1103,10 +1126,6 @@ function LiveTablePredictorApp() {
     };
   }, [refreshRankings]);
 
-  const currentThirdNames = useMemo(
-    () => groups.map((group) => groupOrder[group.id][2]),
-    [groupOrder]
-  );
 
   useEffect(() => {
     window.localStorage.setItem("fifa-rank-predictor-groups-v1", JSON.stringify(groupOrder));
@@ -1140,6 +1159,10 @@ function LiveTablePredictorApp() {
     window.localStorage.setItem("fifa-score-predictions-v1", JSON.stringify(scorePredictions));
   }, [scorePredictions]);
 
+  useEffect(() => {
+    window.localStorage.setItem("fifa-manual-simulation-mode-v1", String(manualSimulationMode));
+  }, [manualSimulationMode]);
+
   const projectedStats = useMemo(
     () => fixtures.length ? calculateProjectedStats(fixtures, scorePredictions) : stats,
     [fixtures, scorePredictions, stats]
@@ -1157,27 +1180,29 @@ function LiveTablePredictorApp() {
     [rankedGroupOrder]
   );
 
-  useEffect(() => {
-    if (!hasProjectedTableData) return;
-    setGroupOrder((current) => sameGroupOrder(current, rankedGroupOrder) ? current : rankedGroupOrder);
-    setAutoPickSnapshot(null);
-    setAutoPickCache(null);
-  }, [hasProjectedTableData, rankedGroupOrderKey]);
-
-  const rankedThirdNames = useMemo(
-    () => currentThirdNames
-      .map(findTeam)
-      .filter((team): team is Team => Boolean(team))
-      .sort((left, right) => compareTeamsByProjectedStats(left, right, projectedStats))
-      .map((team) => team.name),
-    [currentThirdNames.join("|"), projectedStats]
+  const activeGroupOrderKey = useMemo(
+    () => groupOrderKey(groupOrder),
+    [groupOrder]
   );
 
   useEffect(() => {
+    if (!hasProjectedTableData || manualSimulationMode || sameGroupOrder(groupOrder, rankedGroupOrder)) return;
+    setGroupOrder(rankedGroupOrder);
+    setAutoPickSnapshot(null);
+    setAutoPickCache(null);
+  }, [hasProjectedTableData, manualSimulationMode, rankedGroupOrderKey, activeGroupOrderKey]);
+
+  const rankedThirdNames = useMemo(
+    () => rankThirdNamesForOrder(groupOrder, projectedStats),
+    [activeGroupOrderKey, projectedStats]
+  );
+
+  useEffect(() => {
+    if (manualSimulationMode) return;
     setThirdOrder((current) =>
       current.join("|") === rankedThirdNames.join("|") ? current : rankedThirdNames
     );
-  }, [rankedThirdNames.join("|")]);
+  }, [manualSimulationMode, rankedThirdNames.join("|")]);
 
   const groupPositions = useMemo(
     () => Object.fromEntries(
@@ -1213,12 +1238,18 @@ function LiveTablePredictorApp() {
 
   function moveGroupTeam(groupId: string, fromIndex: number, toIndex: number) {
     if (toIndex < 0 || toIndex > 3 || fromIndex === toIndex) return;
-    setGroupOrder((current) => {
-      const nextGroup = [...current[groupId]];
-      const [team] = nextGroup.splice(fromIndex, 1);
-      nextGroup.splice(toIndex, 0, team);
-      return { ...current, [groupId]: nextGroup };
-    });
+    const nextGroup = [...groupOrder[groupId]];
+    const [team] = nextGroup.splice(fromIndex, 1);
+    nextGroup.splice(toIndex, 0, team);
+    const nextGroupOrder = { ...groupOrder, [groupId]: nextGroup };
+    const nextThirdNames = thirdNamesForOrder(nextGroupOrder);
+
+    setManualSimulationMode(true);
+    setGroupOrder(nextGroupOrder);
+    setThirdOrder((current) => [
+      ...current.filter((teamName) => nextThirdNames.includes(teamName)),
+      ...nextThirdNames.filter((teamName) => !current.includes(teamName))
+    ]);
     setBracketPicks({});
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
@@ -1226,6 +1257,7 @@ function LiveTablePredictorApp() {
 
   function moveThirdTeam(fromIndex: number, toIndex: number) {
     if (toIndex < 0 || toIndex >= thirdOrder.length || fromIndex === toIndex) return;
+    setManualSimulationMode(true);
     setThirdOrder((current) => {
       const next = [...current];
       const [team] = next.splice(fromIndex, 1);
@@ -1257,6 +1289,7 @@ function LiveTablePredictorApp() {
       .sort((a, b) => compareTeamsByProjectedStats(a, b, nextStats));
 
     setScorePredictions(nextPredictions);
+    setManualSimulationMode(false);
     setGroupOrder(nextGroupOrder);
     setThirdOrder(rankedThirds.map((team) => team.name));
     setBracketPicks({});
@@ -1265,8 +1298,18 @@ function LiveTablePredictorApp() {
     setPredictionGroup(null);
   }
 
+  function syncLiveTable() {
+    setManualSimulationMode(false);
+    setGroupOrder(rankedGroupOrder);
+    setThirdOrder(rankThirdNamesForOrder(rankedGroupOrder, projectedStats));
+    setBracketPicks({});
+    setAutoPickSnapshot(null);
+    setAutoPickCache(null);
+  }
+
   function resetPredictions() {
     const defaults = defaultGroupOrder();
+    setManualSimulationMode(false);
     setGroupOrder(defaults);
     setThirdOrder(groups.map((group) => defaults[group.id][2]));
     setScorePredictions({});
@@ -1372,6 +1415,8 @@ function LiveTablePredictorApp() {
             onPredictGroup={setPredictionGroup}
             onPreviewOpponents={setOpponentPreviewGroup}
             roundOf32PreviewReady={roundOf32PreviewReady}
+            manualSimulationMode={manualSimulationMode}
+            onSyncLiveTable={syncLiveTable}
             onReset={resetPredictions}
             onContinue={() => switchView("bracket")}
           />
@@ -1504,6 +1549,8 @@ function GroupPredictor({
   onPredictGroup,
   onPreviewOpponents,
   roundOf32PreviewReady,
+  manualSimulationMode,
+  onSyncLiveTable,
   onReset,
   onContinue
 }: {
@@ -1520,6 +1567,8 @@ function GroupPredictor({
   onPredictGroup: (groupId: string) => void;
   onPreviewOpponents: (groupId: string) => void;
   roundOf32PreviewReady: boolean;
+  manualSimulationMode: boolean;
+  onSyncLiveTable: () => void;
   onReset: () => void;
   onContinue: () => void;
 }) {
@@ -1535,11 +1584,10 @@ function GroupPredictor({
       </header>
 
       <aside className="rules-strip rank-rules" aria-label="Qualification rules">
-        <div><strong>Positions 1–2</strong><span>Qualify automatically from every group</span></div>
+        <div><strong>Positions 1-2</strong><span>Qualify automatically from every group</span></div>
         <div><strong>Position 3</strong><span>Moves into your third-place ranking table</span></div>
-        <div><strong>Live statistics</strong><span>Refresh automatically every 60 seconds</span></div>
+        <div><strong>{manualSimulationMode ? "Manual simulation" : "Live statistics"}</strong><span>{manualSimulationMode ? "Live reordering is paused until you sync" : "Refresh automatically every 60 seconds"}</span></div>
       </aside>
-
       <div className="live-group-grid">
         {groups.map((group) => (
           <LiveGroupCard
@@ -1561,8 +1609,11 @@ function GroupPredictor({
 
       <div className="sticky-actions">
         <button className="secondary-button" onClick={onReset} type="button"><RotateCcw size={17} /> Reset FIFA order</button>
+        {manualSimulationMode && (
+          <button className="secondary-button accent" onClick={onSyncLiveTable} type="button"><RefreshCw size={17} /> Sync live table</button>
+        )}
         <div>
-          <span>Your ranking is saved automatically</span>
+          <span>{manualSimulationMode ? "Manual simulation locked · Round of 32 follows your table" : "Your ranking is saved automatically"}</span>
           <button className="primary-button" onClick={onContinue} type="button">Build Round of 32 <ArrowRight size={18} /></button>
         </div>
       </div>
