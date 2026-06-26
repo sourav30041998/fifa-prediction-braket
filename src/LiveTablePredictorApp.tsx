@@ -382,14 +382,35 @@ type OfficialMatch = {
   labels: [string, string];
 };
 
-type RoundOf32OpponentPreview = {
-  team: Team;
-  position: number;
-  matchNumber?: number;
-  slotLabel?: string;
+type RoundOf32SlotPreview = {
+  matchNumber: number;
+  slotLabel: string;
   opponent?: Team;
-  opponentSlotLabel?: string;
+  opponentSlotLabel: string;
 };
+
+type RoundOf32ScenarioOutcome = "win" | "draw" | "loss" | "exact";
+
+type RoundOf32ScenarioPreview = RoundOf32SlotPreview & {
+  outcome: RoundOf32ScenarioOutcome;
+  outcomeLabel: string;
+  projectedPosition: number;
+};
+
+type RoundOf32TeamScenarioPreview = {
+  team: Team;
+  currentPosition: number;
+  currentStats: TeamStats;
+  fixed: boolean;
+  nextMatchOpponent?: Team;
+  scenarios: RoundOf32ScenarioPreview[];
+};
+
+const scenarioOutcomes: Array<{ outcome: Exclude<RoundOf32ScenarioOutcome, "exact">; label: string }> = [
+  { outcome: "win", label: "If they win" },
+  { outcome: "draw", label: "If they draw" },
+  { outcome: "loss", label: "If they lose" }
+];
 
 const roundOf16Sources: Record<number, [number, number]> = {
   89: [73, 75],
@@ -530,36 +551,145 @@ function hasEveryGroupReachedSecondMatch(stats: StatsMap) {
   );
 }
 
-function buildGroupOpponentPreviews(
-  group: Group,
-  order: string[],
-  roundOf32: Map<number, OfficialMatch>
-): RoundOf32OpponentPreview[] {
-  const previews: RoundOf32OpponentPreview[] = [];
+function getRoundOf32SlotPreview(team: Team, roundOf32: Map<number, OfficialMatch>): RoundOf32SlotPreview | null {
+  for (const match of roundOf32.values()) {
+    const teamIndex = match.teams.findIndex((candidate) => candidate?.name === team.name);
+    if (teamIndex === -1) continue;
+    const opponentIndex = teamIndex === 0 ? 1 : 0;
+    return {
+      matchNumber: match.number,
+      slotLabel: match.labels[teamIndex],
+      opponent: match.teams[opponentIndex],
+      opponentSlotLabel: match.labels[opponentIndex]
+    };
+  }
+  return null;
+}
 
-  order.forEach((teamName, index) => {
-    const team = findTeam(teamName);
-    if (!team || team.groupId !== group.id) return;
+function findNextFixtureForTeam(team: Team, fixtures: GroupFixture[]) {
+  return fixtures
+    .filter((fixture) =>
+      !fixture.completed &&
+      (fixture.homeCode === team.code || fixture.awayCode === team.code)
+    )
+    .sort((left, right) => left.kickoff.localeCompare(right.kickoff))[0];
+}
 
-    for (const match of roundOf32.values()) {
-      const teamIndex = match.teams.findIndex((candidate) => candidate?.name === team.name);
-      if (teamIndex === -1) continue;
-      const opponentIndex = teamIndex === 0 ? 1 : 0;
-      previews.push({
-        team,
-        position: index + 1,
-        matchNumber: match.number,
-        slotLabel: match.labels[teamIndex],
-        opponent: match.teams[opponentIndex],
-        opponentSlotLabel: match.labels[opponentIndex]
+function getFixtureOpponent(team: Team, fixture?: GroupFixture) {
+  if (!fixture) return undefined;
+  const opponentCode = fixture.homeCode === team.code ? fixture.awayCode : fixture.homeCode;
+  return findTeamByCode(opponentCode);
+}
+
+function scoreForScenarioOutcome(
+  fixture: GroupFixture,
+  team: Team,
+  outcome: Exclude<RoundOf32ScenarioOutcome, "exact">
+): ScorePrediction {
+  const teamIsHome = fixture.homeCode === team.code;
+  if (outcome === "draw") return { home: 1, away: 1 };
+  const teamGoals = outcome === "win" ? 1 : 0;
+  const opponentGoals = outcome === "win" ? 0 : 1;
+  return teamIsHome
+    ? { home: teamGoals, away: opponentGoals }
+    : { home: opponentGoals, away: teamGoals };
+}
+
+function buildThirdOrderFromGroupOrder(groupOrder: GroupOrder, stats: StatsMap) {
+  return groups
+    .map((group) => findTeam(groupOrder[group.id][2]))
+    .filter((team): team is Team => Boolean(team))
+    .sort((left, right) => compareTeamsByProjectedStats(left, right, stats))
+    .map((team) => team.name);
+}
+
+function buildGroupOpponentPreviews({
+  group,
+  groupOrder,
+  roundOf32,
+  stats,
+  fixtures,
+  predictions
+}: {
+  group: Group;
+  groupOrder: GroupOrder;
+  roundOf32: Map<number, OfficialMatch>;
+  stats: StatsMap;
+  fixtures: GroupFixture[];
+  predictions: ScorePredictions;
+}): RoundOf32TeamScenarioPreview[] {
+  const order = groupOrder[group.id] ?? group.teams.map((team) => team.name);
+
+  return order
+    .map((teamName, index) => {
+      const team = findTeam(teamName);
+      if (!team || team.groupId !== group.id) return null;
+
+      const currentStats = stats[team.code] ?? emptyStats;
+      const currentPosition = index + 1;
+      const nextFixture = findNextFixtureForTeam(team, fixtures);
+      const nextMatchOpponent = getFixtureOpponent(team, nextFixture);
+
+      if (!nextFixture) {
+        const slot = getRoundOf32SlotPreview(team, roundOf32);
+        if (!slot) return null;
+        return {
+          team,
+          currentPosition,
+          currentStats,
+          fixed: true,
+          scenarios: [{ ...slot, outcome: "exact", outcomeLabel: "Exact opponent", projectedPosition: currentPosition }]
+        };
+      }
+
+      const scenarios = scenarioOutcomes.flatMap(({ outcome, label }) => {
+        const scenarioPredictions = {
+          ...predictions,
+          [nextFixture.id]: scoreForScenarioOutcome(nextFixture, team, outcome)
+        };
+        const scenarioStats = calculateProjectedStats(fixtures, scenarioPredictions);
+        const scenarioGroupOrder = {
+          ...groupOrder,
+          [group.id]: [...group.teams]
+            .sort((left, right) => compareTeamsByProjectedStats(left, right, scenarioStats))
+            .map((candidate) => candidate.name)
+        };
+        const scenarioThirdOrder = buildThirdOrderFromGroupOrder(scenarioGroupOrder, scenarioStats);
+        const scenarioRoundOf32 = buildRoundOf32(scenarioGroupOrder, scenarioThirdOrder);
+        const slot = getRoundOf32SlotPreview(team, scenarioRoundOf32);
+        if (!slot) return [];
+        return [{
+          ...slot,
+          outcome,
+          outcomeLabel: label,
+          projectedPosition: scenarioGroupOrder[group.id].indexOf(team.name) + 1
+        }];
       });
-      return;
-    }
 
-    previews.push({ team, position: index + 1 });
-  });
+      if (scenarios.length === 0) return null;
 
-  return previews;
+      const uniqueMatchups = new Set(
+        scenarios.map((scenario) => [
+          scenario.matchNumber,
+          scenario.slotLabel,
+          scenario.opponent?.name ?? "pending",
+          scenario.opponentSlotLabel
+        ].join("|"))
+      );
+      const fixed = scenarios.length === scenarioOutcomes.length && uniqueMatchups.size === 1;
+
+      return {
+        team,
+        currentPosition,
+        currentStats,
+        fixed,
+        nextMatchOpponent,
+        scenarios: fixed
+          ? [{ ...scenarios[0], outcome: "exact", outcomeLabel: "Exact opponent" }]
+          : scenarios
+      };
+    })
+    .filter((preview): preview is RoundOf32TeamScenarioPreview => Boolean(preview));
 }
 
 function LiveTablePredictorApp() {
@@ -932,9 +1062,11 @@ function LiveTablePredictorApp() {
       {opponentPreviewGroup && (
         <GroupOpponentPreviewModal
           group={groups.find((group) => group.id === opponentPreviewGroup)!}
-          order={groupOrder[opponentPreviewGroup]}
+          groupOrder={groupOrder}
           roundOf32={roundOf32}
           stats={projectedStats}
+          fixtures={fixtures.filter((fixture) => fixture.groupId === opponentPreviewGroup)}
+          predictions={scorePredictions}
           onClose={() => setOpponentPreviewGroup(null)}
         />
       )}
@@ -1559,18 +1691,22 @@ function GroupMatchesModal({
 
 function GroupOpponentPreviewModal({
   group,
-  order,
+  groupOrder,
   roundOf32,
   stats,
+  fixtures,
+  predictions,
   onClose
 }: {
   group: Group;
-  order: string[];
+  groupOrder: GroupOrder;
   roundOf32: Map<number, OfficialMatch>;
   stats: StatsMap;
+  fixtures: GroupFixture[];
+  predictions: ScorePredictions;
   onClose: () => void;
 }) {
-  const previews = buildGroupOpponentPreviews(group, order, roundOf32);
+  const previews = buildGroupOpponentPreviews({ group, groupOrder, roundOf32, stats, fixtures, predictions });
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -1595,8 +1731,8 @@ function GroupOpponentPreviewModal({
         <header className="group-match-modal-header">
           <div>
             <span className="eyebrow">GROUP {group.id} · SYSTEM-GENERATED</span>
-            <h2 id="opponent-preview-title">Probable Round of 32 opponents</h2>
-            <p>Based on the current group order, third-place board, and official FIFA Round of 32 slot mapping.</p>
+            <h2 id="opponent-preview-title">Round of 32 scenario routes</h2>
+            <p>Only teams with at least one qualifying route are shown. Each route recalculates this group, the third-place table, and the official Round of 32 mapping.</p>
           </div>
           <button className="modal-close" aria-label="Close Round of 32 opponent preview" onClick={onClose} type="button"><X size={22} /></button>
         </header>
@@ -1604,49 +1740,71 @@ function GroupOpponentPreviewModal({
         <div className="opponent-preview-body">
           <div className="opponent-preview-system-note">
             <Sparkles size={16} />
-            <span>System-generated preview. Move teams or save score predictions to update these possible matchups.</span>
+            <span>System-generated preview. Win/draw/loss routes use a simple 1-goal model for the team&apos;s next group match and hide eliminated outcomes.</span>
           </div>
-          <div className="opponent-preview-grid">
-            {previews.map((preview) => {
-              const teamStats = stats[preview.team.code] ?? emptyStats;
-              const qualified = Boolean(preview.matchNumber);
-              return (
-                <article className={`opponent-preview-card ${qualified ? "qualified" : "not-qualified"}`} key={preview.team.name}>
-                  <div className="preview-team-panel">
-                    <span className="preview-position">{formatGroupPosition(preview.position)}</span>
-                    <Flag team={preview.team} />
-                    <strong>{preview.team.name}</strong>
-                    <em>{preview.slotLabel ? formatRoundOf32Slot(preview.slotLabel) : "Not currently projected to qualify"}</em>
-                    <small>{teamStats.mp} MP · {teamStats.pts} Pts · {teamStats.gd > 0 ? "+" : ""}{teamStats.gd} GD</small>
-                  </div>
 
-                  <div className="preview-match-bridge">
-                    <span>{preview.matchNumber ? `M${preview.matchNumber}` : "TBD"}</span>
-                    <i />
-                    <small>{preview.matchNumber ? "Round of 32" : "Outside top 32"}</small>
-                  </div>
+          {previews.length === 0 ? (
+            <div className="opponent-preview-empty">
+              <Info size={22} />
+              <strong>No active Round of 32 route</strong>
+              <span>The teams in Group {group.id} are currently outside the qualifying routes in this projection.</span>
+            </div>
+          ) : (
+            <div className="opponent-preview-grid scenario-preview-grid">
+              {previews.map((preview) => (
+                <article className={`scenario-team-card ${preview.fixed ? "exact" : "variable"}`} key={preview.team.name}>
+                  <header className="scenario-team-header">
+                    <div className="scenario-team-identity">
+                      <Flag team={preview.team} />
+                      <div>
+                        <strong>{preview.team.name}</strong>
+                        <span>{formatGroupPosition(preview.currentPosition)} now · {preview.currentStats.mp} MP · {preview.currentStats.pts} Pts · {preview.currentStats.gd > 0 ? "+" : ""}{preview.currentStats.gd} GD</span>
+                      </div>
+                    </div>
+                    <span className={`scenario-status-pill ${preview.fixed ? "exact" : "variable"}`}>
+                      {preview.fixed ? "Exact opponent" : "Possible routes"}
+                    </span>
+                  </header>
 
-                  <div className="preview-opponent-panel">
-                    {preview.opponent ? (
-                      <>
-                        <span className="preview-position">Opponent</span>
-                        <Flag team={preview.opponent} />
-                        <strong>{preview.opponent.name}</strong>
-                        <em>{preview.opponentSlotLabel ? formatRoundOf32Slot(preview.opponentSlotLabel) : "Opponent slot pending"}</em>
-                      </>
-                    ) : (
-                      <>
-                        <span className="preview-position">Opponent</span>
-                        <div className="preview-empty-flag">?</div>
-                        <strong>{qualified ? "Pending" : "No opponent"}</strong>
-                        <em>{qualified ? "Awaiting bracket slot" : "Team is outside current qualification places"}</em>
-                      </>
-                    )}
+                  <p className="scenario-team-note">
+                    {preview.fixed
+                      ? "The current projection has a fixed Round of 32 matchup for this team."
+                      : preview.nextMatchOpponent
+                        ? <>Next group match: <strong>{preview.team.name}</strong> vs <strong>{preview.nextMatchOpponent.name}</strong></>
+                        : "Scenario route based on the current projection."}
+                  </p>
+
+                  <div className={preview.fixed ? "scenario-exact-grid" : "scenario-outcome-grid"}>
+                    {preview.scenarios.map((scenario) => (
+                      <article className="scenario-outcome-card" key={`${preview.team.name}-${scenario.outcome}-${scenario.matchNumber}`}>
+                        <div className="scenario-outcome-label">
+                          <strong>{scenario.outcomeLabel}</strong>
+                          <span>{formatGroupPosition(scenario.projectedPosition)} · {formatRoundOf32Slot(scenario.slotLabel)}</span>
+                        </div>
+
+                        <div className="scenario-matchup-flow">
+                          <div className="scenario-source-slot">
+                            <Flag team={preview.team} />
+                            <strong>{preview.team.name}</strong>
+                          </div>
+                          <div className="scenario-match-bridge">
+                            <span>M{scenario.matchNumber}</span>
+                            <i />
+                            <small>Round of 32</small>
+                          </div>
+                          <div className="scenario-opponent-slot">
+                            {scenario.opponent ? <Flag team={scenario.opponent} /> : <div className="preview-empty-flag">?</div>}
+                            <strong>{scenario.opponent?.name ?? "Pending"}</strong>
+                            <em>{formatRoundOf32Slot(scenario.opponentSlotLabel)}</em>
+                          </div>
+                        </div>
+                      </article>
+                    ))}
                   </div>
                 </article>
-              );
-            })}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <footer className="group-match-modal-footer opponent-preview-footer">
@@ -1657,7 +1815,6 @@ function GroupOpponentPreviewModal({
     </div>
   );
 }
-
 function formatGroupPosition(position: number) {
   if (position === 1) return "1st in group";
   if (position === 2) return "2nd in group";

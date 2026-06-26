@@ -340,7 +340,7 @@
 }
 
 .opponent-preview-modal {
-  width: min(860px, calc(100vw - 32px));
+  width: min(960px, calc(100vw - 32px));
 }
 
 .opponent-preview-body {
@@ -368,52 +368,193 @@
   color: var(--orange);
 }
 
-.opponent-preview-grid {
+.opponent-preview-empty {
   display: grid;
-  gap: 12px;
+  min-height: 220px;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  border: 1px dashed #c4cedd;
+  border-radius: 11px;
+  background: white;
+  color: #6d788b;
+  text-align: center;
 }
 
-.opponent-preview-card {
+.opponent-preview-empty strong {
+  color: #17243a;
+  font-family: var(--display);
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.opponent-preview-empty span {
+  max-width: 430px;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.5;
+}
+
+.scenario-preview-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 112px minmax(0, 1fr);
-  align-items: stretch;
-  gap: 10px;
+  gap: 14px;
+}
+
+.scenario-team-card {
+  display: grid;
+  gap: 11px;
   border: 1px solid #d7deea;
-  border-radius: 10px;
+  border-left: 4px solid #0d9c72;
+  border-radius: 11px;
   background: white;
-  padding: 12px;
+  padding: 13px;
   box-shadow: 0 8px 22px rgba(8, 30, 70, 0.06);
 }
 
-.opponent-preview-card.qualified {
-  border-left: 4px solid #0d9c72;
+.scenario-team-card.variable {
+  border-left-color: var(--orange);
 }
 
-.opponent-preview-card.not-qualified {
-  border-left: 4px solid #aab4c3;
-  opacity: 0.78;
+.scenario-team-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
 }
 
-.preview-team-panel,
-.preview-opponent-panel {
+.scenario-team-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.scenario-team-identity .official-flag {
+  flex: 0 0 auto;
+  width: 42px;
+  height: 28px;
+}
+
+.scenario-team-identity > div {
   display: grid;
   min-width: 0;
-  grid-template-columns: 42px minmax(0, 1fr);
-  grid-template-rows: auto auto auto auto;
-  align-content: center;
-  gap: 4px 10px;
-  border-radius: 8px;
-  background: #f7f9fc;
-  padding: 11px;
+  gap: 3px;
 }
 
-.preview-team-panel .official-flag,
-.preview-opponent-panel .official-flag,
+.scenario-team-identity strong {
+  overflow: hidden;
+  color: #17243a;
+  font-size: 15px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scenario-team-identity span,
+.scenario-team-note {
+  color: #69768a;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.scenario-team-note {
+  margin: 0;
+  border-radius: 8px;
+  background: #f7f9fc;
+  padding: 8px 10px;
+}
+
+.scenario-team-note strong {
+  color: var(--deep-blue);
+}
+
+.scenario-status-pill {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-height: 26px;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 10px;
+  background: #e9f8f2;
+  color: #087657;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.scenario-status-pill.variable {
+  background: #fff1e5;
+  color: #b24a00;
+}
+
+.scenario-outcome-grid,
+.scenario-exact-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.scenario-outcome-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.scenario-outcome-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #dce3ee;
+  border-radius: 9px;
+  background: linear-gradient(180deg, #ffffff, #f8fafc);
+  padding: 10px;
+}
+
+.scenario-outcome-label {
+  display: grid;
+  gap: 3px;
+}
+
+.scenario-outcome-label strong {
+  color: var(--deep-blue);
+  font-family: var(--display);
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.scenario-outcome-label span {
+  color: #69768a;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.scenario-matchup-flow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 74px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.scenario-source-slot,
+.scenario-opponent-slot {
+  display: grid;
+  min-width: 0;
+  justify-items: center;
+  gap: 4px;
+  border-radius: 8px;
+  background: #eef3ff;
+  padding: 9px 7px;
+  text-align: center;
+}
+
+.scenario-opponent-slot {
+  background: #fff8f1;
+}
+
+.scenario-source-slot .official-flag,
+.scenario-opponent-slot .official-flag,
 .preview-empty-flag {
-  grid-row: 2 / 5;
-  width: 38px;
-  height: 26px;
-  align-self: start;
+  width: 36px;
+  height: 24px;
 }
 
 .preview-empty-flag {
@@ -426,67 +567,55 @@
   font-weight: 900;
 }
 
-.preview-position {
-  grid-column: 1 / -1;
-  color: var(--royal);
-  font-size: 9px;
-  font-weight: 900;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.preview-team-panel strong,
-.preview-opponent-panel strong {
+.scenario-source-slot strong,
+.scenario-opponent-slot strong {
   overflow: hidden;
+  max-width: 100%;
   color: #17243a;
-  font-size: 13px;
+  font-size: 10px;
   font-weight: 900;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.preview-team-panel em,
-.preview-opponent-panel em,
-.preview-team-panel small {
+.scenario-opponent-slot em {
   color: #69768a;
-  font-size: 9px;
+  font-size: 8px;
   font-style: normal;
-  font-weight: 750;
-  line-height: 1.35;
+  font-weight: 800;
+  line-height: 1.25;
 }
 
-.preview-match-bridge {
+.scenario-match-bridge {
   display: grid;
-  align-content: center;
   justify-items: center;
-  gap: 7px;
-  color: var(--deep-blue);
+  gap: 5px;
   text-align: center;
 }
 
-.preview-match-bridge span {
+.scenario-match-bridge span {
   display: grid;
-  min-width: 56px;
-  min-height: 34px;
+  min-width: 54px;
+  min-height: 30px;
   place-items: center;
   border-radius: 999px;
   background: var(--deep-blue);
   color: white;
   font-family: var(--display);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 900;
 }
 
-.preview-match-bridge i {
+.scenario-match-bridge i {
   display: block;
   width: 100%;
   height: 2px;
   background: linear-gradient(90deg, transparent, #9aaadd, transparent);
 }
 
-.preview-match-bridge small {
+.scenario-match-bridge small {
   color: #66748a;
-  font-size: 8px;
+  font-size: 7px;
   font-weight: 900;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -499,7 +628,6 @@
 .opponent-preview-footer > div svg {
   color: var(--orange);
 }
-
 @media (max-width: 760px) {
   .match-prediction-backdrop {
     padding: 8px;
@@ -567,11 +695,20 @@
     min-width: 800px;
   }
 
-  .opponent-preview-card {
+  .scenario-team-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .scenario-outcome-grid {
     grid-template-columns: 1fr;
   }
 
-  .preview-match-bridge i {
+  .scenario-matchup-flow {
+    grid-template-columns: 1fr;
+  }
+
+  .scenario-match-bridge i {
     width: 82%;
   }
 
