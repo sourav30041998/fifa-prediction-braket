@@ -2072,16 +2072,7 @@ function GroupOpponentPreviewModal({
                           </div>
                           <div className="scenario-opponent-slot route-opponent-pool">
                             <em>{route.opponentSlotLabels.length ? route.opponentSlotLabels.join(", ") : "Opponent slot pending"}</em>
-                            <div className="possible-opponent-list">
-                              {route.possibleOpponents.slice(0, 6).map((opponent) => (
-                                <span className="possible-opponent-chip" key={`${route.key}-${opponent.name}`}>
-                                  <Flag team={opponent} />
-                                  <strong>{opponent.name}</strong>
-                                </span>
-                              ))}
-                              {route.possibleOpponents.length === 0 && <span className="possible-opponent-empty">Pending</span>}
-                              {route.possibleOpponents.length > 6 && <span className="possible-opponent-more">+{route.possibleOpponents.length - 6} more</span>}
-                            </div>
+                            <PossibleOpponentPool route={route} />
                           </div>
                         </div>
                       </article>
@@ -2101,6 +2092,33 @@ function GroupOpponentPreviewModal({
     </div>
   );
 }
+function PossibleOpponentPool({ route }: { route: QualificationRoute }) {
+  const [expanded, setExpanded] = useState(false);
+  const visibleOpponents = expanded ? route.possibleOpponents : route.possibleOpponents.slice(0, 6);
+  const hiddenCount = route.possibleOpponents.length - 6;
+
+  return (
+    <div className="possible-opponent-list">
+      {visibleOpponents.map((opponent) => (
+        <span className="possible-opponent-chip" key={`${route.key}-${opponent.name}`}>
+          <Flag team={opponent} />
+          <strong>{opponent.name}</strong>
+        </span>
+      ))}
+      {route.possibleOpponents.length === 0 && <span className="possible-opponent-empty">Pending</span>}
+      {hiddenCount > 0 && (
+        <button
+          className="possible-opponent-more"
+          onClick={() => setExpanded((current) => !current)}
+          type="button"
+        >
+          {expanded ? "Show less" : `+${hiddenCount} more`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function formatOrdinal(position: number) {
   if (position === 1) return "1st";
   if (position === 2) return "2nd";
