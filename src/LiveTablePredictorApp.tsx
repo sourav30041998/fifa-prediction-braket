@@ -382,6 +382,15 @@ type OfficialMatch = {
   labels: [string, string];
 };
 
+type RoundOf32OpponentPreview = {
+  team: Team;
+  position: number;
+  matchNumber?: number;
+  slotLabel?: string;
+  opponent?: Team;
+  opponentSlotLabel?: string;
+};
+
 const roundOf16Sources: Record<number, [number, number]> = {
   89: [73, 75],
   90: [74, 77],
@@ -514,6 +523,45 @@ function sanitizeOfficialPicks(picks: BracketPicks, roundOf32: Map<number, Offic
 function sameBracketPicks(left: BracketPicks, right: BracketPicks) {
   return officialPickOrder.every((matchNumber) => left[`m${matchNumber}`] === right[`m${matchNumber}`]);
 }
+
+function hasEveryGroupReachedSecondMatch(stats: StatsMap) {
+  return groups.every((group) =>
+    group.teams.every((team) => (stats[team.code]?.mp ?? 0) >= 2)
+  );
+}
+
+function buildGroupOpponentPreviews(
+  group: Group,
+  order: string[],
+  roundOf32: Map<number, OfficialMatch>
+): RoundOf32OpponentPreview[] {
+  const previews: RoundOf32OpponentPreview[] = [];
+
+  order.forEach((teamName, index) => {
+    const team = findTeam(teamName);
+    if (!team || team.groupId !== group.id) return;
+
+    for (const match of roundOf32.values()) {
+      const teamIndex = match.teams.findIndex((candidate) => candidate?.name === team.name);
+      if (teamIndex === -1) continue;
+      const opponentIndex = teamIndex === 0 ? 1 : 0;
+      previews.push({
+        team,
+        position: index + 1,
+        matchNumber: match.number,
+        slotLabel: match.labels[teamIndex],
+        opponent: match.teams[opponentIndex],
+        opponentSlotLabel: match.labels[opponentIndex]
+      });
+      return;
+    }
+
+    previews.push({ team, position: index + 1 });
+  });
+
+  return previews;
+}
+
 function LiveTablePredictorApp() {
   const initialOrder = useMemo(loadGroupOrder, []);
   const cache = useMemo(loadCachedStats, []);
@@ -529,6 +577,7 @@ function LiveTablePredictorApp() {
   const [fixtures, setFixtures] = useState<GroupFixture[]>(loadCachedFixtures);
   const [scorePredictions, setScorePredictions] = useState<ScorePredictions>(loadScorePredictions);
   const [predictionGroup, setPredictionGroup] = useState<string | null>(null);
+  const [opponentPreviewGroup, setOpponentPreviewGroup] = useState<string | null>(null);
   const [feedState, setFeedState] = useState<FeedState>(
     Object.keys(cache.stats).length ? "cached" : "loading"
   );
@@ -677,6 +726,7 @@ function LiveTablePredictorApp() {
     () => buildRoundOf32(groupOrder, thirdOrder),
     [groupOrder, thirdOrder]
   );
+  const roundOf32PreviewReady = hasEveryGroupReachedSecondMatch(projectedStats);
   const champion = findTeam(bracketPicks.m104);
   const knockoutPickCount = officialPickOrder.filter((matchNumber) => bracketPicks[`m${matchNumber}`]).length;
 
@@ -851,6 +901,8 @@ function LiveTablePredictorApp() {
             onMoveGroupTeam={moveGroupTeam}
             onMoveThirdTeam={moveThirdTeam}
             onPredictGroup={setPredictionGroup}
+            onPreviewOpponents={setOpponentPreviewGroup}
+            roundOf32PreviewReady={roundOf32PreviewReady}
             onReset={resetPredictions}
             onContinue={() => switchView("bracket")}
           />
@@ -875,6 +927,15 @@ function LiveTablePredictorApp() {
           predictions={scorePredictions}
           onClose={() => setPredictionGroup(null)}
           onSave={(predictions) => saveGroupPredictions(predictionGroup, predictions)}
+        />
+      )}
+      {opponentPreviewGroup && (
+        <GroupOpponentPreviewModal
+          group={groups.find((group) => group.id === opponentPreviewGroup)!}
+          order={groupOrder[opponentPreviewGroup]}
+          roundOf32={roundOf32}
+          stats={projectedStats}
+          onClose={() => setOpponentPreviewGroup(null)}
         />
       )}
       {showGuide && <GuideModal onClose={() => setShowGuide(false)} />}
@@ -972,6 +1033,8 @@ function GroupPredictor({
   onMoveGroupTeam,
   onMoveThirdTeam,
   onPredictGroup,
+  onPreviewOpponents,
+  roundOf32PreviewReady,
   onReset,
   onContinue
 }: {
@@ -986,6 +1049,8 @@ function GroupPredictor({
   onMoveGroupTeam: (groupId: string, fromIndex: number, toIndex: number) => void;
   onMoveThirdTeam: (fromIndex: number, toIndex: number) => void;
   onPredictGroup: (groupId: string) => void;
+  onPreviewOpponents: (groupId: string) => void;
+  roundOf32PreviewReady: boolean;
   onReset: () => void;
   onContinue: () => void;
 }) {
@@ -1017,6 +1082,8 @@ function GroupPredictor({
             fixtureCount={fixtures.filter((fixture) => fixture.groupId === group.id).length}
             onMove={onMoveGroupTeam}
             onPredict={onPredictGroup}
+            onPreviewOpponents={onPreviewOpponents}
+            roundOf32PreviewReady={roundOf32PreviewReady}
           />
         ))}
       </div>
@@ -1058,7 +1125,9 @@ function LiveGroupCard({
   stats,
   fixtureCount,
   onMove,
-  onPredict
+  onPredict,
+  onPreviewOpponents,
+  roundOf32PreviewReady
 }: {
   group: Group;
   order: string[];
@@ -1067,6 +1136,8 @@ function LiveGroupCard({
   fixtureCount: number;
   onMove: (groupId: string, fromIndex: number, toIndex: number) => void;
   onPredict: (groupId: string) => void;
+  onPreviewOpponents: (groupId: string) => void;
+  roundOf32PreviewReady: boolean;
 }) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   function drop(event: DragEvent<HTMLDivElement>, toIndex: number) {
@@ -1130,6 +1201,16 @@ function LiveGroupCard({
       >
         <span>Predict Group {group.id} matches</span>
         <strong>{fixtureCount || "—"}/6</strong>
+      </button>
+      <button
+        className="group-round32-preview-button"
+        disabled={!roundOf32PreviewReady}
+        onClick={() => onPreviewOpponents(group.id)}
+        title={roundOf32PreviewReady ? `View probable Round of 32 opponents for Group ${group.id}` : "Available after every group has reached two played or predicted matches"}
+        type="button"
+      >
+        <span>Probable Round of 32 opponents</span>
+        <strong>{roundOf32PreviewReady ? "View" : "2 MP"}</strong>
       </button>
     </article>
   );
@@ -1474,6 +1555,114 @@ function GroupMatchesModal({
       </section>
     </div>
   );
+}
+
+function GroupOpponentPreviewModal({
+  group,
+  order,
+  roundOf32,
+  stats,
+  onClose
+}: {
+  group: Group;
+  order: string[];
+  roundOf32: Map<number, OfficialMatch>;
+  stats: StatsMap;
+  onClose: () => void;
+}) {
+  const previews = buildGroupOpponentPreviews(group, order, roundOf32);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event: KeyboardEvent) => event.key === "Escape" && onClose();
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [onClose]);
+
+  return (
+    <div className="modal-backdrop match-prediction-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        aria-labelledby="opponent-preview-title"
+        aria-modal="true"
+        className="group-match-modal opponent-preview-modal"
+        role="dialog"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="group-match-modal-header">
+          <div>
+            <span className="eyebrow">GROUP {group.id} · SYSTEM-GENERATED</span>
+            <h2 id="opponent-preview-title">Probable Round of 32 opponents</h2>
+            <p>Based on the current group order, third-place board, and official FIFA Round of 32 slot mapping.</p>
+          </div>
+          <button className="modal-close" aria-label="Close Round of 32 opponent preview" onClick={onClose} type="button"><X size={22} /></button>
+        </header>
+
+        <div className="opponent-preview-body">
+          <div className="opponent-preview-system-note">
+            <Sparkles size={16} />
+            <span>System-generated preview. Move teams or save score predictions to update these possible matchups.</span>
+          </div>
+          <div className="opponent-preview-grid">
+            {previews.map((preview) => {
+              const teamStats = stats[preview.team.code] ?? emptyStats;
+              const qualified = Boolean(preview.matchNumber);
+              return (
+                <article className={`opponent-preview-card ${qualified ? "qualified" : "not-qualified"}`} key={preview.team.name}>
+                  <div className="preview-team-panel">
+                    <span className="preview-position">{formatGroupPosition(preview.position)}</span>
+                    <Flag team={preview.team} />
+                    <strong>{preview.team.name}</strong>
+                    <em>{preview.slotLabel ? formatRoundOf32Slot(preview.slotLabel) : "Not currently projected to qualify"}</em>
+                    <small>{teamStats.mp} MP · {teamStats.pts} Pts · {teamStats.gd > 0 ? "+" : ""}{teamStats.gd} GD</small>
+                  </div>
+
+                  <div className="preview-match-bridge">
+                    <span>{preview.matchNumber ? `M${preview.matchNumber}` : "TBD"}</span>
+                    <i />
+                    <small>{preview.matchNumber ? "Round of 32" : "Outside top 32"}</small>
+                  </div>
+
+                  <div className="preview-opponent-panel">
+                    {preview.opponent ? (
+                      <>
+                        <span className="preview-position">Opponent</span>
+                        <Flag team={preview.opponent} />
+                        <strong>{preview.opponent.name}</strong>
+                        <em>{preview.opponentSlotLabel ? formatRoundOf32Slot(preview.opponentSlotLabel) : "Opponent slot pending"}</em>
+                      </>
+                    ) : (
+                      <>
+                        <span className="preview-position">Opponent</span>
+                        <div className="preview-empty-flag">?</div>
+                        <strong>{qualified ? "Pending" : "No opponent"}</strong>
+                        <em>{qualified ? "Awaiting bracket slot" : "Team is outside current qualification places"}</em>
+                      </>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+
+        <footer className="group-match-modal-footer opponent-preview-footer">
+          <div><Info size={16} /><span>This does not change your table or bracket picks.</span></div>
+          <button className="primary-button" onClick={onClose} type="button">Done</button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function formatGroupPosition(position: number) {
+  if (position === 1) return "1st in group";
+  if (position === 2) return "2nd in group";
+  if (position === 3) return "3rd in group";
+  return `${position}th in group`;
 }
 
 function GuideModal({ onClose }: { onClose: () => void }) {
