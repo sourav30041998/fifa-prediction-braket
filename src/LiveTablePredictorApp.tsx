@@ -451,6 +451,9 @@ type QualificationRoute = {
   matchNumbers: number[];
   opponentSlotLabels: string[];
   possibleOpponents: Team[];
+  slotLabel: string;
+  isPositionLocked: boolean;
+  isFinalRoute: boolean;
 };
 
 type RoundOf32TeamScenarioPreview = {
@@ -629,6 +632,57 @@ function canTreatRoundOf32SlotAsExact(slot: RoundOf32SlotPreview, fixtures: Grou
   return sourceGroups.length > 0 && sourceGroups.every((groupId) => hasGroupCompletedAllMatches(groupId, fixtures));
 }
 
+function isSlotPositionLocked(slotLabel: string, fixtures: GroupFixture[]) {
+  const sourceGroups = getSlotSourceGroups(slotLabel);
+  return sourceGroups.length > 0 && sourceGroups.every((groupId) => hasGroupCompletedAllMatches(groupId, fixtures));
+}
+
+function isRoundOf32RouteFixed(slotLabel: string, opponentSlotLabels: string[], fixtures: GroupFixture[]) {
+  if (opponentSlotLabels.length !== 1) return false;
+  const labels = [slotLabel, ...opponentSlotLabels];
+
+  if (labels.some((label) => label.startsWith("3"))) {
+    return hasEveryGroupCompletedAllMatches(fixtures);
+  }
+
+  const sourceGroups = labels.flatMap(getSlotSourceGroups);
+  return sourceGroups.length > 0 && sourceGroups.every((groupId) => hasGroupCompletedAllMatches(groupId, fixtures));
+}
+
+function getRouteLabel(status: "automatic" | "third", position: number, isPositionLocked: boolean, isFinalRoute: boolean) {
+  if (isFinalRoute) return "Final route";
+  if (isPositionLocked) return status === "third" ? "Finished 3rd" : `Finished ${formatOrdinal(position)}`;
+  return status === "third" ? "Can qualify as 3rd" : `Can finish ${formatOrdinal(position)}`;
+}
+
+function getRouteMetaLabel(route: QualificationRoute) {
+  const certainty = route.isFinalRoute
+    ? "Final Round of 32 matchup"
+    : route.isPositionLocked
+      ? `${formatOrdinal(route.position)} place locked`
+      : `${route.scenarioCount} table combination${route.scenarioCount === 1 ? "" : "s"}`;
+
+  return `${certainty} · Pts ${formatRange(route.pointsRange)} · GD ${formatRange(route.gdRange)} · ${route.status === "third" ? "Best-third route" : "Automatic route"}`;
+}
+
+function getPreviewRouteNote(preview: RoundOf32TeamScenarioPreview, manualSimulationMode: boolean) {
+  if (manualSimulationMode) return "This route is taken directly from your current Round of 32 bracket mapping.";
+  if (preview.routes.every((route) => route.isFinalRoute)) return "This Round of 32 matchup is fixed from completed group positions.";
+  if (preview.routes.every((route) => route.isPositionLocked)) return "This team has finished its group position; remaining uncertainty is only the opponent route.";
+  return "Possible route count is based on all result combinations for the remaining matches in this group.";
+}
+
+function getPreviewPillLabel(preview: RoundOf32TeamScenarioPreview) {
+  if (preview.routes.every((route) => route.isFinalRoute)) return preview.routes.length === 1 ? "Final route" : "Final routes";
+  if (preview.routes.every((route) => route.isPositionLocked)) return "Position locked";
+  return `${preview.routes.length} route${preview.routes.length === 1 ? "" : "s"}`;
+}
+
+function getPreviewPillClass(preview: RoundOf32TeamScenarioPreview) {
+  if (preview.routes.every((route) => route.isFinalRoute)) return "fixed";
+  if (preview.routes.every((route) => route.isPositionLocked)) return "locked";
+  return "variable";
+}
 function getRoundOf32SlotPreview(team: Team, roundOf32: Map<number, OfficialMatch>): RoundOf32SlotPreview | null {
   for (const match of roundOf32.values()) {
     const teamIndex = match.teams.findIndex((candidate) => candidate?.name === team.name);
@@ -942,7 +996,10 @@ function buildQualificationRoute({
   status,
   matchNumbers,
   opponentSlotLabels,
-  possibleOpponents
+  possibleOpponents,
+  slotLabel,
+  isPositionLocked,
+  isFinalRoute
 }: {
   team: Team;
   states: GroupOutcomeState[];
@@ -953,6 +1010,9 @@ function buildQualificationRoute({
   matchNumbers: number[];
   opponentSlotLabels: string[];
   possibleOpponents: Team[];
+  slotLabel: string;
+  isPositionLocked: boolean;
+  isFinalRoute: boolean;
 }): QualificationRoute | null {
   if (states.length === 0) return null;
   return {
@@ -965,10 +1025,12 @@ function buildQualificationRoute({
     gdRange: getStatRange(states, team, "gd"),
     matchNumbers,
     opponentSlotLabels,
-    possibleOpponents
+    possibleOpponents,
+    slotLabel,
+    isPositionLocked,
+    isFinalRoute
   };
 }
-
 function buildManualGroupOpponentPreviews({
   group,
   groupOrder,
@@ -1008,7 +1070,10 @@ function buildManualGroupOpponentPreviews({
           gdRange: [currentStats.gd, currentStats.gd],
           matchNumbers: [slot.matchNumber],
           opponentSlotLabels: [slot.opponentSlotLabel],
-          possibleOpponents: slot.opponent ? [slot.opponent] : []
+          possibleOpponents: slot.opponent ? [slot.opponent] : [],
+          slotLabel: slot.slotLabel,
+          isPositionLocked: false,
+          isFinalRoute: false
         }]
       };
     })
@@ -1049,27 +1114,38 @@ function buildGroupOpponentPreviews({
         const positionStates = getTeamStatesForPosition(groupStates, team.name, position);
         const slotLabel = `${position}${group.id}`;
         const opponents = buildAutomaticRouteOpponents(slotLabel, outcomeMap, possibleThirdGroups);
+        const isPositionLocked = isSlotPositionLocked(slotLabel, fixtures);
+        const isFinalRoute = isRoundOf32RouteFixed(slotLabel, opponents.opponentSlotLabels, fixtures);
         const route = buildQualificationRoute({
           team,
           states: positionStates,
-          label: `Can finish ${formatOrdinal(position)}`,
+          label: getRouteLabel("automatic", position, isPositionLocked, isFinalRoute),
           key: `${team.code}-${slotLabel}`,
           position,
           status: "automatic",
+          slotLabel,
+          isPositionLocked,
+          isFinalRoute,
           ...opponents
         });
         if (route) routes.push(route);
       });
 
       const thirdStates = getTeamQualifiedThirdStates(group.id, groupStates, team.name, outcomeMap);
+      const thirdSlotLabel = `3${group.id}`;
       const thirdOpponents = buildThirdRouteOpponents(group.id, outcomeMap, possibleThirdGroups);
+      const isThirdPositionLocked = isSlotPositionLocked(thirdSlotLabel, fixtures);
+      const isThirdFinalRoute = isRoundOf32RouteFixed(thirdSlotLabel, thirdOpponents.opponentSlotLabels, fixtures);
       const thirdRoute = buildQualificationRoute({
         team,
         states: thirdStates,
-        label: "Can qualify as 3rd",
+        label: getRouteLabel("third", 3, isThirdPositionLocked, isThirdFinalRoute),
         key: `${team.code}-3${group.id}`,
         position: 3,
         status: "third",
+        slotLabel: thirdSlotLabel,
+        isPositionLocked: isThirdPositionLocked,
+        isFinalRoute: isThirdFinalRoute,
         ...thirdOpponents
       });
       if (thirdRoute) routes.push(thirdRoute);
@@ -2205,21 +2281,21 @@ function GroupOpponentPreviewModal({
                         <span>{formatGroupPosition(preview.currentPosition)} now · {preview.currentStats.mp} MP · {preview.currentStats.pts} Pts · {preview.currentStats.gd > 0 ? "+" : ""}{preview.currentStats.gd} GD</span>
                       </div>
                     </div>
-                    <span className="scenario-status-pill variable">
-                      {preview.routes.length} route{preview.routes.length === 1 ? "" : "s"}
+                    <span className={`scenario-status-pill ${getPreviewPillClass(preview)}`}>
+                      {getPreviewPillLabel(preview)}
                     </span>
                   </header>
 
                   <p className="scenario-team-note">
-                    {manualSimulationMode ? "This route is taken directly from your current Round of 32 bracket mapping." : "Possible route count is based on all result combinations for the remaining matches in this group."}
+                    {getPreviewRouteNote(preview, manualSimulationMode)}
                   </p>
 
                   <div className="scenario-outcome-grid">
                     {preview.routes.map((route) => (
-                      <article className={`scenario-outcome-card ${route.status}`} key={route.key}>
+                      <article className={`scenario-outcome-card ${route.status} ${route.isFinalRoute ? "final-route" : route.isPositionLocked ? "locked-route" : ""}`} key={route.key}>
                         <div className="scenario-outcome-label">
                           <strong>{route.label}</strong>
-                          <span>{route.scenarioCount} table combination{route.scenarioCount === 1 ? "" : "s"} · Pts {formatRange(route.pointsRange)} · GD {formatRange(route.gdRange)} · {route.status === "third" ? "Best-third route" : "Automatic route"}</span>
+                          <span>{getRouteMetaLabel(route)}</span>
                         </div>
 
                         <div className="scenario-matchup-flow">

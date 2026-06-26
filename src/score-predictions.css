@@ -489,6 +489,15 @@
   color: #b24a00;
 }
 
+.scenario-status-pill.locked {
+  background: #eaf2ff;
+  color: #0a4ea3;
+}
+
+.scenario-status-pill.fixed {
+  background: #e9f8f2;
+  color: #087657;
+}
 .scenario-outcome-grid,
 .scenario-exact-grid {
   display: grid;
@@ -508,6 +517,16 @@
   padding: 10px;
 }
 
+.scenario-outcome-card.locked-route {
+  border-color: #b8d2ff;
+  background: linear-gradient(180deg, #ffffff, #f5f8ff);
+}
+
+.scenario-outcome-card.final-route {
+  border-color: #8bd7bd;
+  background: linear-gradient(180deg, #ffffff, #f2fff9);
+  box-shadow: inset 3px 0 0 #087657;
+}
 .scenario-outcome-label {
   display: grid;
   gap: 3px;
