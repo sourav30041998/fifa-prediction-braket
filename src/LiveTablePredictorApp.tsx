@@ -1086,13 +1086,6 @@ function LiveTablePredictorApp() {
   );
 
   useEffect(() => {
-    setThirdOrder((current) => [
-      ...current.filter((name) => currentThirdNames.includes(name)),
-      ...currentThirdNames.filter((name) => !current.includes(name))
-    ]);
-  }, [currentThirdNames.join("|")]);
-
-  useEffect(() => {
     window.localStorage.setItem("fifa-rank-predictor-groups-v1", JSON.stringify(groupOrder));
   }, [groupOrder]);
 
@@ -1128,6 +1121,21 @@ function LiveTablePredictorApp() {
     () => fixtures.length ? calculateProjectedStats(fixtures, scorePredictions) : stats,
     [fixtures, scorePredictions, stats]
   );
+  const rankedThirdNames = useMemo(
+    () => currentThirdNames
+      .map(findTeam)
+      .filter((team): team is Team => Boolean(team))
+      .sort((left, right) => compareTeamsByProjectedStats(left, right, projectedStats))
+      .map((team) => team.name),
+    [currentThirdNames.join("|"), projectedStats]
+  );
+
+  useEffect(() => {
+    setThirdOrder((current) =>
+      current.join("|") === rankedThirdNames.join("|") ? current : rankedThirdNames
+    );
+  }, [rankedThirdNames.join("|")]);
+
   const groupPositions = useMemo(
     () => Object.fromEntries(
       groups.flatMap((group) => groupOrder[group.id].map((teamName, index) => [teamName, index + 1]))
