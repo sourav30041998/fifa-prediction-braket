@@ -969,17 +969,71 @@ function buildQualificationRoute({
   };
 }
 
+function buildManualGroupOpponentPreviews({
+  group,
+  groupOrder,
+  stats,
+  roundOf32
+}: {
+  group: Group;
+  groupOrder: GroupOrder;
+  stats: StatsMap;
+  roundOf32: Map<number, OfficialMatch>;
+}): RoundOf32TeamScenarioPreview[] {
+  const currentOrder = groupOrder[group.id] ?? group.teams.map((team) => team.name);
+
+  return currentOrder
+    .map((teamName, index) => {
+      const team = findTeam(teamName);
+      if (!team) return null;
+
+      const slot = getRoundOf32SlotPreview(team, roundOf32);
+      if (!slot) return null;
+
+      const currentStats = stats[team.code] ?? emptyStats;
+      const status = slot.slotLabel.startsWith("3") ? "third" : "automatic";
+      const currentPosition = index + 1;
+
+      return {
+        team,
+        currentPosition,
+        currentStats,
+        routes: [{
+          key: `${team.code}-${slot.slotLabel}-manual`,
+          label: status === "third" ? "Manual 3rd-place route" : `Manual ${formatOrdinal(currentPosition)} route`,
+          position: currentPosition,
+          status,
+          scenarioCount: 1,
+          pointsRange: [currentStats.pts, currentStats.pts],
+          gdRange: [currentStats.gd, currentStats.gd],
+          matchNumbers: [slot.matchNumber],
+          opponentSlotLabels: [slot.opponentSlotLabel],
+          possibleOpponents: slot.opponent ? [slot.opponent] : []
+        }]
+      };
+    })
+    .filter((preview): preview is RoundOf32TeamScenarioPreview => Boolean(preview));
+}
+
 function buildGroupOpponentPreviews({
   group,
   groupOrder,
   stats,
-  fixtures
+  fixtures,
+  roundOf32,
+  manualSimulationMode
 }: {
   group: Group;
   groupOrder: GroupOrder;
   stats: StatsMap;
   fixtures: GroupFixture[];
+  roundOf32: Map<number, OfficialMatch>;
+  manualSimulationMode: boolean;
 }): RoundOf32TeamScenarioPreview[] {
+  if (manualSimulationMode) {
+    return buildManualGroupOpponentPreviews({ group, groupOrder, stats, roundOf32 });
+  }
+
   const outcomeMap = buildGroupOutcomeMap(fixtures, stats);
   const possibleThirdGroups = getPossibleThirdQualifyingGroups(outcomeMap);
   const groupStates = outcomeMap[group.id] ?? [];
@@ -1447,8 +1501,10 @@ function LiveTablePredictorApp() {
         <GroupOpponentPreviewModal
           group={groups.find((group) => group.id === opponentPreviewGroup)!}
           groupOrder={groupOrder}
-          stats={stats}
+          stats={projectedStats}
           fixtures={fixtures}
+          roundOf32={roundOf32}
+          manualSimulationMode={manualSimulationMode}
           onClose={() => setOpponentPreviewGroup(null)}
         />
       )}
@@ -2082,15 +2138,19 @@ function GroupOpponentPreviewModal({
   groupOrder,
   stats,
   fixtures,
+  roundOf32,
+  manualSimulationMode,
   onClose
 }: {
   group: Group;
   groupOrder: GroupOrder;
   stats: StatsMap;
   fixtures: GroupFixture[];
+  roundOf32: Map<number, OfficialMatch>;
+  manualSimulationMode: boolean;
   onClose: () => void;
 }) {
-  const previews = buildGroupOpponentPreviews({ group, groupOrder, stats, fixtures });
+  const previews = buildGroupOpponentPreviews({ group, groupOrder, stats, fixtures, roundOf32, manualSimulationMode });
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -2116,7 +2176,7 @@ function GroupOpponentPreviewModal({
           <div>
             <span className="eyebrow">GROUP {group.id} · SYSTEM-GENERATED</span>
             <h2 id="opponent-preview-title">Round of 32 possible routes</h2>
-            <p>Every remaining Group {group.id} match is simulated as home win, draw, or away win. The table is recalculated for every combination before mapping FIFA Round of 32 slots.</p>
+            <p>{manualSimulationMode ? "This preview follows your current manual table and third-place board before mapping FIFA Round of 32 slots." : `Every remaining Group ${group.id} match is simulated as home win, draw, or away win. The table is recalculated for every combination before mapping FIFA Round of 32 slots.`}</p>
           </div>
           <button className="modal-close" aria-label="Close Round of 32 opponent preview" onClick={onClose} type="button"><X size={22} /></button>
         </header>
@@ -2124,7 +2184,7 @@ function GroupOpponentPreviewModal({
         <div className="opponent-preview-body">
           <div className="opponent-preview-system-note">
             <Sparkles size={16} />
-            <span>No fake goal margins are used. Points decide first; if points are level, the preview uses the current GD/GF table as the tie-break estimate.</span>
+            <span>{manualSimulationMode ? "Manual simulation is active, so only teams qualifying from your current table are shown here." : "No fake goal margins are used. Points decide first; if points are level, the preview uses the current GD/GF table as the tie-break estimate."}</span>
           </div>
 
           {previews.length === 0 ? (
@@ -2151,7 +2211,7 @@ function GroupOpponentPreviewModal({
                   </header>
 
                   <p className="scenario-team-note">
-                    Possible route count is based on all result combinations for the remaining matches in this group.
+                    {manualSimulationMode ? "This route is taken directly from your current Round of 32 bracket mapping." : "Possible route count is based on all result combinations for the remaining matches in this group."}
                   </p>
 
                   <div className="scenario-outcome-grid">
@@ -2187,7 +2247,7 @@ function GroupOpponentPreviewModal({
         </div>
 
         <footer className="group-match-modal-footer opponent-preview-footer">
-          <div><Info size={16} /><span>This does not change your table or bracket picks.</span></div>
+          <div><Info size={16} /><span>{manualSimulationMode ? "This follows your manual table and does not change bracket picks." : "This does not change your table or bracket picks."}</span></div>
           <button className="primary-button" onClick={onClose} type="button">Done</button>
         </footer>
       </section>
