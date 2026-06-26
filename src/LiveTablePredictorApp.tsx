@@ -28,7 +28,6 @@ import {
 } from "lucide-react";
 import { getAnnexCAllocation } from "./fifaAnnexC";
 import {
-  calculateWinProbability,
   deterministicMatchRandom,
   pickProbableWinner,
   type PredictionRanking
@@ -390,38 +389,35 @@ type RoundOf32SlotPreview = {
   opponentSlotLabel: string;
 };
 
-type RoundOf32ScenarioOutcome = "win" | "draw" | "loss" | "exact";
+type GroupOutcomeState = {
+  order: string[];
+  stats: StatsMap;
+  outcomeSummary: string[];
+};
 
-type RoundOf32ScenarioPreview = RoundOf32SlotPreview & {
-  outcome: RoundOf32ScenarioOutcome;
-  outcomeLabel: string;
-  projectedPosition: number;
-  projectedStats: TeamStats;
-  variantKey: string;
+type QualificationRoute = {
+  key: string;
+  label: string;
+  position: number;
+  status: "automatic" | "third";
+  scenarioCount: number;
+  pointsRange: [number, number];
+  gdRange: [number, number];
+  matchNumbers: number[];
+  opponentSlotLabels: string[];
+  possibleOpponents: Team[];
 };
 
 type RoundOf32TeamScenarioPreview = {
   team: Team;
   currentPosition: number;
   currentStats: TeamStats;
-  fixed: boolean;
-  nextMatchOpponent?: Team;
-  scenarios: RoundOf32ScenarioPreview[];
+  routes: QualificationRoute[];
 };
 
-const scenarioVariants: Array<{
-  outcome: Exclude<RoundOf32ScenarioOutcome, "exact">;
-  label: string;
-  variantKey: string;
-  teamGoals: number;
-  opponentGoals: number;
-}> = [
-  { outcome: "win", label: "If they win by 1", variantKey: "win-1", teamGoals: 1, opponentGoals: 0 },
-  { outcome: "win", label: "If they win big (+5 GD)", variantKey: "win-5", teamGoals: 5, opponentGoals: 0 },
-  { outcome: "draw", label: "If they draw", variantKey: "draw", teamGoals: 1, opponentGoals: 1 },
-  { outcome: "loss", label: "If they lose by 1", variantKey: "loss-1", teamGoals: 0, opponentGoals: 1 },
-  { outcome: "loss", label: "If they lose heavily (-5 GD)", variantKey: "loss-5", teamGoals: 0, opponentGoals: 5 }
-];
+type ResultOutcome = "home" | "draw" | "away";
+
+const resultOutcomes: ResultOutcome[] = ["home", "draw", "away"];
 
 const roundOf16Sources: Record<number, [number, number]> = {
   89: [73, 75],
@@ -618,227 +614,369 @@ function getFixtureOpponent(team: Team, fixture?: GroupFixture) {
   return findTeamByCode(opponentCode);
 }
 
-function scoreForScenarioVariant(
-  fixture: GroupFixture,
-  team: Team,
-  variant: (typeof scenarioVariants)[number]
-): ScorePrediction {
-  const teamIsHome = fixture.homeCode === team.code;
-  return teamIsHome
-    ? { home: variant.teamGoals, away: variant.opponentGoals }
-    : { home: variant.opponentGoals, away: variant.teamGoals };
-}
-
-function getGroupPositionsFromOrder(groupOrder: GroupOrder) {
+function cloneStatsMap(stats: StatsMap) {
   return Object.fromEntries(
-    groups.flatMap((group) => groupOrder[group.id].map((teamName, index) => [teamName, index + 1]))
-  ) as Record<string, number>;
+    allTeams.map((team) => [team.code, { ...(stats[team.code] ?? emptyStats) }])
+  ) as StatsMap;
 }
 
-function predictFutureFixtureScore({
-  fixture,
-  stats,
-  rankings,
-  groupOrder
-}: {
-  fixture: GroupFixture;
-  stats: StatsMap;
-  rankings: RankingMap;
-  groupOrder: GroupOrder;
-}): ScorePrediction {
-  const homeTeam = findTeamByCode(fixture.homeCode);
-  const awayTeam = findTeamByCode(fixture.awayCode);
-  if (!homeTeam || !awayTeam) return { home: 1, away: 1 };
+function applyResultOutcome(stats: StatsMap, fixture: GroupFixture, outcome: ResultOutcome) {
+  const homeStats = stats[fixture.homeCode];
+  const awayStats = stats[fixture.awayCode];
+  if (!homeStats || !awayStats) return;
 
-  const homeWinProbability = calculateWinProbability(homeTeam, awayTeam, {
-    stats,
-    rankings,
-    groupPositions: getGroupPositionsFromOrder(groupOrder)
-  });
-  const probabilityGap = Math.abs(homeWinProbability - 0.5);
+  homeStats.mp += 1;
+  awayStats.mp += 1;
 
-  if (probabilityGap < 0.08) return { home: 1, away: 1 };
-
-  const favoriteIsHome = homeWinProbability > 0.5;
-  const favoriteGoals = probabilityGap > 0.22 ? 3 : probabilityGap > 0.14 ? 2 : 1;
-  const underdogGoals = favoriteGoals >= 3 ? 0 : 1;
-
-  return favoriteIsHome
-    ? { home: favoriteGoals, away: underdogGoals }
-    : { home: underdogGoals, away: favoriteGoals };
+  if (outcome === "home") {
+    homeStats.w += 1;
+    homeStats.pts += 3;
+    awayStats.l += 1;
+  } else if (outcome === "away") {
+    awayStats.w += 1;
+    awayStats.pts += 3;
+    homeStats.l += 1;
+  } else {
+    homeStats.d += 1;
+    awayStats.d += 1;
+    homeStats.pts += 1;
+    awayStats.pts += 1;
+  }
 }
 
-function buildFuturePredictions({
-  fixtures,
-  predictions,
-  stats,
-  rankings,
-  groupOrder,
-  overrides = {}
-}: {
-  fixtures: GroupFixture[];
-  predictions: ScorePredictions;
-  stats: StatsMap;
-  rankings: RankingMap;
-  groupOrder: GroupOrder;
-  overrides?: ScorePredictions;
-}) {
-  const futurePredictions: ScorePredictions = { ...predictions };
+function formatOutcomeLabel(fixture: GroupFixture, outcome: ResultOutcome) {
+  const home = findTeamByCode(fixture.homeCode);
+  const away = findTeamByCode(fixture.awayCode);
+  if (!home || !away) return outcome;
+  if (outcome === "home") return `${home.code} win`;
+  if (outcome === "away") return `${away.code} win`;
+  return `${home.code}-${away.code} draw`;
+}
 
-  fixtures.forEach((fixture) => {
-    if (fixture.completed) return;
-    if (overrides[fixture.id]) {
-      futurePredictions[fixture.id] = overrides[fixture.id];
+function enumerateGroupOutcomeStates(group: Group, fixtures: GroupFixture[], stats: StatsMap): GroupOutcomeState[] {
+  const remainingFixtures = fixtures
+    .filter((fixture) => fixture.groupId === group.id && !fixture.completed)
+    .sort((left, right) => left.kickoff.localeCompare(right.kickoff));
+  const states: GroupOutcomeState[] = [];
+
+  function walk(index: number, currentStats: StatsMap, outcomeSummary: string[]) {
+    if (index >= remainingFixtures.length) {
+      states.push({
+        order: [...group.teams]
+          .sort((left, right) => compareTeamsByProjectedStats(left, right, currentStats))
+          .map((team) => team.name),
+        stats: currentStats,
+        outcomeSummary
+      });
       return;
     }
-    if (futurePredictions[fixture.id]) return;
-    futurePredictions[fixture.id] = predictFutureFixtureScore({ fixture, stats, rankings, groupOrder });
-  });
 
-  return futurePredictions;
+    const fixture = remainingFixtures[index];
+    resultOutcomes.forEach((outcome) => {
+      const nextStats = cloneStatsMap(currentStats);
+      applyResultOutcome(nextStats, fixture, outcome);
+      walk(index + 1, nextStats, [...outcomeSummary, formatOutcomeLabel(fixture, outcome)]);
+    });
+  }
+
+  walk(0, cloneStatsMap(stats), []);
+  return states;
 }
 
-function buildGroupOrderFromStats(stats: StatsMap): GroupOrder {
+function buildGroupOutcomeMap(fixtures: GroupFixture[], stats: StatsMap) {
   return Object.fromEntries(
-    groups.map((group) => [
-      group.id,
-      [...group.teams]
-        .sort((left, right) => compareTeamsByProjectedStats(left, right, stats))
-        .map((team) => team.name)
-    ])
-  ) as GroupOrder;
+    groups.map((group) => [group.id, enumerateGroupOutcomeStates(group, fixtures, stats)])
+  ) as Record<string, GroupOutcomeState[]>;
 }
 
-function buildThirdOrderFromGroupOrder(groupOrder: GroupOrder, stats: StatsMap) {
+function compareStatsForRanking(left: TeamStats, right: TeamStats) {
+  return (
+    right.pts - left.pts ||
+    right.gd - left.gd ||
+    right.gf - left.gf
+  );
+}
+
+function getThirdCandidateForState(groupId: string, state: GroupOutcomeState) {
+  const team = findTeam(state.order[2]);
+  if (!team) return undefined;
+  return { groupId, team, stats: state.stats[team.code] ?? emptyStats };
+}
+
+function canThirdPlaceStateQualify(groupId: string, state: GroupOutcomeState, outcomeMap: Record<string, GroupOutcomeState[]>) {
+  const candidate = getThirdCandidateForState(groupId, state);
+  if (!candidate) return false;
+
+  const guaranteedAbove = groups
+    .filter((group) => group.id !== groupId)
+    .filter((group) => {
+      const otherThirds = outcomeMap[group.id]
+        .map((otherState) => getThirdCandidateForState(group.id, otherState))
+        .filter((item): item is { groupId: string; team: Team; stats: TeamStats } => Boolean(item));
+      return otherThirds.length > 0 && otherThirds.every((other) => compareStatsForRanking(other.stats, candidate.stats) < 0);
+    }).length;
+
+  return guaranteedAbove < 8;
+}
+
+function teamCanFinishPosition(states: GroupOutcomeState[], teamName: string, position: number) {
+  return states.some((state) => state.order[position - 1] === teamName);
+}
+
+function possibleTeamsForPosition(outcomeMap: Record<string, GroupOutcomeState[]>, groupId: string, position: number) {
+  const names = new Set<string>();
+  outcomeMap[groupId]?.forEach((state) => {
+    const name = state.order[position - 1];
+    if (name) names.add(name);
+  });
+  return [...names].map(findTeam).filter((team): team is Team => Boolean(team));
+}
+
+function teamCanQualifyAsThird(groupId: string, teamName: string, outcomeMap: Record<string, GroupOutcomeState[]>) {
+  return outcomeMap[groupId]?.some((state) =>
+    state.order[2] === teamName && canThirdPlaceStateQualify(groupId, state, outcomeMap)
+  ) ?? false;
+}
+
+function possibleTeamsForQualifiedThirdGroup(outcomeMap: Record<string, GroupOutcomeState[]>, groupId: string) {
+  const names = new Set<string>();
+  outcomeMap[groupId]?.forEach((state) => {
+    const name = state.order[2];
+    if (name && canThirdPlaceStateQualify(groupId, state, outcomeMap)) names.add(name);
+  });
+  return [...names].map(findTeam).filter((team): team is Team => Boolean(team));
+}
+
+function getTeamStatesForPosition(states: GroupOutcomeState[], teamName: string, position: number) {
+  return states.filter((state) => state.order[position - 1] === teamName);
+}
+
+function getTeamQualifiedThirdStates(groupId: string, states: GroupOutcomeState[], teamName: string, outcomeMap: Record<string, GroupOutcomeState[]>) {
+  return states.filter((state) =>
+    state.order[2] === teamName && canThirdPlaceStateQualify(groupId, state, outcomeMap)
+  );
+}
+
+function getStatRange(states: GroupOutcomeState[], team: Team, stat: keyof Pick<TeamStats, "pts" | "gd">): [number, number] {
+  const values = states.map((state) => state.stats[team.code]?.[stat] ?? 0);
+  return [Math.min(...values), Math.max(...values)];
+}
+
+function uniqueTeams(teams: Team[]) {
+  return [...new Map(teams.map((team) => [team.name, team])).values()];
+}
+
+const automaticRoundOf32Slots: Record<string, { matchNumber: number; opponentLabel?: string; thirdOpponentForWinner?: keyof ReturnType<typeof getAnnexCAllocation> }> = {
+  "2A": { matchNumber: 73, opponentLabel: "2B" },
+  "2B": { matchNumber: 73, opponentLabel: "2A" },
+  "1E": { matchNumber: 74, thirdOpponentForWinner: "E" },
+  "1F": { matchNumber: 75, opponentLabel: "2C" },
+  "2C": { matchNumber: 75, opponentLabel: "1F" },
+  "1C": { matchNumber: 76, opponentLabel: "2F" },
+  "2F": { matchNumber: 76, opponentLabel: "1C" },
+  "1I": { matchNumber: 77, thirdOpponentForWinner: "I" },
+  "2E": { matchNumber: 78, opponentLabel: "2I" },
+  "2I": { matchNumber: 78, opponentLabel: "2E" },
+  "1A": { matchNumber: 79, thirdOpponentForWinner: "A" },
+  "1L": { matchNumber: 80, thirdOpponentForWinner: "L" },
+  "1D": { matchNumber: 81, thirdOpponentForWinner: "D" },
+  "1G": { matchNumber: 82, thirdOpponentForWinner: "G" },
+  "2K": { matchNumber: 83, opponentLabel: "2L" },
+  "2L": { matchNumber: 83, opponentLabel: "2K" },
+  "1H": { matchNumber: 84, opponentLabel: "2J" },
+  "2J": { matchNumber: 84, opponentLabel: "1H" },
+  "1B": { matchNumber: 85, thirdOpponentForWinner: "B" },
+  "1J": { matchNumber: 86, opponentLabel: "2H" },
+  "2H": { matchNumber: 86, opponentLabel: "1J" },
+  "1K": { matchNumber: 87, thirdOpponentForWinner: "K" },
+  "2D": { matchNumber: 88, opponentLabel: "2G" },
+  "2G": { matchNumber: 88, opponentLabel: "2D" }
+};
+
+function chooseGroupSets(values: string[], size: number, required?: string) {
+  const results: string[][] = [];
+  const sorted = [...values].sort();
+
+  function walk(start: number, picked: string[]) {
+    if (picked.length === size) {
+      if (!required || picked.includes(required)) results.push([...picked]);
+      return;
+    }
+    for (let index = start; index < sorted.length; index += 1) {
+      picked.push(sorted[index]);
+      walk(index + 1, picked);
+      picked.pop();
+    }
+  }
+
+  walk(0, []);
+  return results;
+}
+
+function getPossibleThirdQualifyingGroups(outcomeMap: Record<string, GroupOutcomeState[]>) {
   return groups
-    .map((group) => findTeam(groupOrder[group.id][2]))
-    .filter((team): team is Team => Boolean(team))
-    .sort((left, right) => compareTeamsByProjectedStats(left, right, stats))
-    .map((team) => team.name);
+    .filter((group) => outcomeMap[group.id].some((state) => canThirdPlaceStateQualify(group.id, state, outcomeMap)))
+    .map((group) => group.id);
 }
 
-function buildFutureTournamentState({
-  fixtures,
-  predictions,
-  stats,
-  rankings,
-  groupOrder,
-  overrides
-}: {
-  fixtures: GroupFixture[];
-  predictions: ScorePredictions;
-  stats: StatsMap;
-  rankings: RankingMap;
-  groupOrder: GroupOrder;
-  overrides?: ScorePredictions;
-}) {
-  const futurePredictions = buildFuturePredictions({ fixtures, predictions, stats, rankings, groupOrder, overrides });
-  const futureStats = calculateProjectedStats(fixtures, futurePredictions);
-  const futureGroupOrder = buildGroupOrderFromStats(futureStats);
-  const futureThirdOrder = buildThirdOrderFromGroupOrder(futureGroupOrder, futureStats);
-  const futureRoundOf32 = buildRoundOf32(futureGroupOrder, futureThirdOrder);
+function getPossibleThirdSourcesForWinner(winnerGroup: keyof ReturnType<typeof getAnnexCAllocation>, possibleThirdGroups: string[]) {
+  const sources = new Set<string>();
+  chooseGroupSets(possibleThirdGroups, 8).forEach((groupSet) => {
+    try {
+      sources.add(getAnnexCAllocation(groupSet)[winnerGroup]);
+    } catch {
+      // Ignore impossible Annex C keys while exploring broad possibilities.
+    }
+  });
+  return [...sources];
+}
 
-  return { futurePredictions, futureStats, futureGroupOrder, futureThirdOrder, futureRoundOf32 };
+function getPossibleWinnerGroupsForThird(thirdGroupId: string, possibleThirdGroups: string[]) {
+  const winners = new Set<keyof ReturnType<typeof getAnnexCAllocation>>();
+  chooseGroupSets(possibleThirdGroups, 8, thirdGroupId).forEach((groupSet) => {
+    try {
+      const allocation = getAnnexCAllocation(groupSet);
+      Object.entries(allocation).forEach(([winnerGroup, sourceGroup]) => {
+        if (sourceGroup === thirdGroupId) winners.add(winnerGroup as keyof ReturnType<typeof getAnnexCAllocation>);
+      });
+    } catch {
+      // Ignore impossible Annex C keys while exploring broad possibilities.
+    }
+  });
+  return [...winners];
+}
+
+function buildAutomaticRouteOpponents(
+  slotLabel: string,
+  outcomeMap: Record<string, GroupOutcomeState[]>,
+  possibleThirdGroups: string[]
+) {
+  const slot = automaticRoundOf32Slots[slotLabel];
+  if (!slot) return { matchNumbers: [] as number[], opponentSlotLabels: [] as string[], possibleOpponents: [] as Team[] };
+
+  if (slot.opponentLabel) {
+    const position = Number(slot.opponentLabel.charAt(0));
+    const groupId = slot.opponentLabel.slice(1);
+    return {
+      matchNumbers: [slot.matchNumber],
+      opponentSlotLabels: [slot.opponentLabel],
+      possibleOpponents: possibleTeamsForPosition(outcomeMap, groupId, position)
+    };
+  }
+
+  const sourceGroups = getPossibleThirdSourcesForWinner(slot.thirdOpponentForWinner!, possibleThirdGroups);
+  return {
+    matchNumbers: [slot.matchNumber],
+    opponentSlotLabels: sourceGroups.map((groupId) => `3${groupId}`),
+    possibleOpponents: uniqueTeams(sourceGroups.flatMap((groupId) => possibleTeamsForQualifiedThirdGroup(outcomeMap, groupId)))
+  };
+}
+
+function buildThirdRouteOpponents(
+  groupId: string,
+  outcomeMap: Record<string, GroupOutcomeState[]>,
+  possibleThirdGroups: string[]
+) {
+  const winnerGroups = getPossibleWinnerGroupsForThird(groupId, possibleThirdGroups);
+  const matchNumbers = winnerGroups
+    .map((winnerGroup) => automaticRoundOf32Slots[`1${winnerGroup}`]?.matchNumber)
+    .filter((matchNumber): matchNumber is number => Boolean(matchNumber));
+  return {
+    matchNumbers: [...new Set(matchNumbers)],
+    opponentSlotLabels: winnerGroups.map((winnerGroup) => `1${winnerGroup}`),
+    possibleOpponents: uniqueTeams(winnerGroups.flatMap((winnerGroup) => possibleTeamsForPosition(outcomeMap, winnerGroup, 1)))
+  };
+}
+
+function buildQualificationRoute({
+  team,
+  states,
+  label,
+  key,
+  position,
+  status,
+  matchNumbers,
+  opponentSlotLabels,
+  possibleOpponents
+}: {
+  team: Team;
+  states: GroupOutcomeState[];
+  label: string;
+  key: string;
+  position: number;
+  status: "automatic" | "third";
+  matchNumbers: number[];
+  opponentSlotLabels: string[];
+  possibleOpponents: Team[];
+}): QualificationRoute | null {
+  if (states.length === 0) return null;
+  return {
+    key,
+    label,
+    position,
+    status,
+    scenarioCount: states.length,
+    pointsRange: getStatRange(states, team, "pts"),
+    gdRange: getStatRange(states, team, "gd"),
+    matchNumbers,
+    opponentSlotLabels,
+    possibleOpponents
+  };
 }
 
 function buildGroupOpponentPreviews({
   group,
   groupOrder,
   stats,
-  fixtures,
-  predictions,
-  rankings
+  fixtures
 }: {
   group: Group;
   groupOrder: GroupOrder;
   stats: StatsMap;
   fixtures: GroupFixture[];
-  predictions: ScorePredictions;
-  rankings: RankingMap;
 }): RoundOf32TeamScenarioPreview[] {
-  const baseFutureState = buildFutureTournamentState({ fixtures, predictions, stats, rankings, groupOrder });
-  const order = baseFutureState.futureGroupOrder[group.id] ?? groupOrder[group.id] ?? group.teams.map((team) => team.name);
+  const outcomeMap = buildGroupOutcomeMap(fixtures, stats);
+  const possibleThirdGroups = getPossibleThirdQualifyingGroups(outcomeMap);
+  const groupStates = outcomeMap[group.id] ?? [];
+  const currentOrder = groupOrder[group.id] ?? group.teams.map((team) => team.name);
 
-  return order
-    .map((teamName) => {
-      const team = findTeam(teamName);
-      if (!team || team.groupId !== group.id) return null;
-
+  return group.teams
+    .map((team) => {
       const currentStats = stats[team.code] ?? emptyStats;
-      const currentPosition = (groupOrder[group.id] ?? order).indexOf(team.name) + 1;
-      const nextFixture = findNextFixtureForTeam(team, fixtures);
-      const nextMatchOpponent = getFixtureOpponent(team, nextFixture);
+      const currentPosition = currentOrder.indexOf(team.name) + 1 || 4;
+      const routes: QualificationRoute[] = [];
 
-      if (!nextFixture) {
-        const slot = getRoundOf32SlotPreview(team, baseFutureState.futureRoundOf32);
-        if (!slot) return null;
-        const fixed = canTreatRoundOf32SlotAsExact(slot, fixtures);
-        const projectedStats = baseFutureState.futureStats[team.code] ?? currentStats;
-        return {
+      [1, 2].forEach((position) => {
+        const positionStates = getTeamStatesForPosition(groupStates, team.name, position);
+        const slotLabel = `${position}${group.id}`;
+        const opponents = buildAutomaticRouteOpponents(slotLabel, outcomeMap, possibleThirdGroups);
+        const route = buildQualificationRoute({
           team,
-          currentPosition,
-          currentStats,
-          fixed,
-          scenarios: [{
-            ...slot,
-            outcome: "exact",
-            outcomeLabel: fixed ? "Exact opponent" : "Projected possible opponent",
-            projectedPosition: baseFutureState.futureGroupOrder[group.id].indexOf(team.name) + 1,
-            projectedStats,
-            variantKey: fixed ? "exact" : "future-projection"
-          }]
-        };
-      }
-
-      const scenarios = scenarioVariants.flatMap((variant) => {
-        const futureState = buildFutureTournamentState({
-          fixtures,
-          predictions,
-          stats,
-          rankings,
-          groupOrder,
-          overrides: {
-            [nextFixture.id]: scoreForScenarioVariant(nextFixture, team, variant)
-          }
+          states: positionStates,
+          label: `Can finish ${formatOrdinal(position)}`,
+          key: `${team.code}-${slotLabel}`,
+          position,
+          status: "automatic",
+          ...opponents
         });
-        const slot = getRoundOf32SlotPreview(team, futureState.futureRoundOf32);
-        if (!slot) return [];
-        return [{
-          ...slot,
-          outcome: variant.outcome,
-          outcomeLabel: variant.label,
-          projectedPosition: futureState.futureGroupOrder[group.id].indexOf(team.name) + 1,
-          projectedStats: futureState.futureStats[team.code] ?? emptyStats,
-          variantKey: variant.variantKey
-        }];
+        if (route) routes.push(route);
       });
 
-      if (scenarios.length === 0) return null;
-
-      const uniqueMatchups = new Set(
-        scenarios.map((scenario) => [
-          scenario.matchNumber,
-          scenario.slotLabel,
-          scenario.opponent?.name ?? "pending",
-          scenario.opponentSlotLabel,
-          scenario.projectedPosition
-        ].join("|"))
-      );
-      const fixed =
-        scenarios.length === scenarioVariants.length &&
-        uniqueMatchups.size === 1 &&
-        canTreatRoundOf32SlotAsExact(scenarios[0], fixtures);
-
-      return {
+      const thirdStates = getTeamQualifiedThirdStates(group.id, groupStates, team.name, outcomeMap);
+      const thirdOpponents = buildThirdRouteOpponents(group.id, outcomeMap, possibleThirdGroups);
+      const thirdRoute = buildQualificationRoute({
         team,
-        currentPosition,
-        currentStats,
-        fixed,
-        nextMatchOpponent,
-        scenarios: fixed
-          ? [{ ...scenarios[0], outcome: "exact", outcomeLabel: "Exact opponent", variantKey: "exact" }]
-          : scenarios
-      };
+        states: thirdStates,
+        label: "Can qualify as 3rd",
+        key: `${team.code}-3${group.id}`,
+        position: 3,
+        status: "third",
+        ...thirdOpponents
+      });
+      if (thirdRoute) routes.push(thirdRoute);
+
+      if (routes.length === 0) return null;
+      return { team, currentPosition, currentStats, routes };
     })
     .filter((preview): preview is RoundOf32TeamScenarioPreview => Boolean(preview));
 }
@@ -1213,10 +1351,8 @@ function LiveTablePredictorApp() {
         <GroupOpponentPreviewModal
           group={groups.find((group) => group.id === opponentPreviewGroup)!}
           groupOrder={groupOrder}
-          stats={projectedStats}
+          stats={stats}
           fixtures={fixtures}
-          predictions={scorePredictions}
-          rankings={rankings}
           onClose={() => setOpponentPreviewGroup(null)}
         />
       )}
@@ -1844,19 +1980,15 @@ function GroupOpponentPreviewModal({
   groupOrder,
   stats,
   fixtures,
-  predictions,
-  rankings,
   onClose
 }: {
   group: Group;
   groupOrder: GroupOrder;
   stats: StatsMap;
   fixtures: GroupFixture[];
-  predictions: ScorePredictions;
-  rankings: RankingMap;
   onClose: () => void;
 }) {
-  const previews = buildGroupOpponentPreviews({ group, groupOrder, stats, fixtures, predictions, rankings });
+  const previews = buildGroupOpponentPreviews({ group, groupOrder, stats, fixtures });
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -1881,8 +2013,8 @@ function GroupOpponentPreviewModal({
         <header className="group-match-modal-header">
           <div>
             <span className="eyebrow">GROUP {group.id} · SYSTEM-GENERATED</span>
-            <h2 id="opponent-preview-title">Round of 32 scenario routes</h2>
-            <p>Only teams with at least one qualifying route are shown. Each route first builds projected final tables for every group, then maps the official Round of 32 path.</p>
+            <h2 id="opponent-preview-title">Round of 32 possible routes</h2>
+            <p>Every remaining Group {group.id} match is simulated as home win, draw, or away win. The table is recalculated for every combination before mapping FIFA Round of 32 slots.</p>
           </div>
           <button className="modal-close" aria-label="Close Round of 32 opponent preview" onClick={onClose} type="button"><X size={22} /></button>
         </header>
@@ -1890,19 +2022,19 @@ function GroupOpponentPreviewModal({
         <div className="opponent-preview-body">
           <div className="opponent-preview-system-note">
             <Sparkles size={16} />
-            <span>System-generated preview. Remaining matches are projected first; Win/Loss routes include normal and big goal-difference margins so tied points can change the path.</span>
+            <span>No fake goal margins are used. Points decide first; if points are level, the preview uses the current GD/GF table as the tie-break estimate.</span>
           </div>
 
           {previews.length === 0 ? (
             <div className="opponent-preview-empty">
               <Info size={22} />
               <strong>No active Round of 32 route</strong>
-              <span>The teams in Group {group.id} are currently outside the qualifying routes in this projection.</span>
+              <span>The teams in Group {group.id} are outside the qualifying routes across the simulated combinations.</span>
             </div>
           ) : (
             <div className="opponent-preview-grid scenario-preview-grid">
               {previews.map((preview) => (
-                <article className={`scenario-team-card ${preview.fixed ? "exact" : "variable"}`} key={preview.team.name}>
+                <article className="scenario-team-card variable" key={preview.team.name}>
                   <header className="scenario-team-header">
                     <div className="scenario-team-identity">
                       <Flag team={preview.team} />
@@ -1911,25 +2043,21 @@ function GroupOpponentPreviewModal({
                         <span>{formatGroupPosition(preview.currentPosition)} now · {preview.currentStats.mp} MP · {preview.currentStats.pts} Pts · {preview.currentStats.gd > 0 ? "+" : ""}{preview.currentStats.gd} GD</span>
                       </div>
                     </div>
-                    <span className={`scenario-status-pill ${preview.fixed ? "exact" : "variable"}`}>
-                      {preview.fixed ? "Exact opponent" : "Possible routes"}
+                    <span className="scenario-status-pill variable">
+                      {preview.routes.length} route{preview.routes.length === 1 ? "" : "s"}
                     </span>
                   </header>
 
                   <p className="scenario-team-note">
-                    {preview.fixed
-                      ? "Both matchup source groups are complete, so this Round of 32 opponent is locked."
-                      : preview.nextMatchOpponent
-                        ? <>Next group match: <strong>{preview.team.name}</strong> vs <strong>{preview.nextMatchOpponent.name}</strong></>
-                        : "The team side is settled, but the opponent side still has group matches left."}
+                    Possible route count is based on all result combinations for the remaining matches in this group.
                   </p>
 
-                  <div className={preview.fixed ? "scenario-exact-grid" : "scenario-outcome-grid"}>
-                    {preview.scenarios.map((scenario) => (
-                      <article className="scenario-outcome-card" key={`${preview.team.name}-${scenario.variantKey}-${scenario.matchNumber}`}>
+                  <div className="scenario-outcome-grid">
+                    {preview.routes.map((route) => (
+                      <article className={`scenario-outcome-card ${route.status}`} key={route.key}>
                         <div className="scenario-outcome-label">
-                          <strong>{scenario.outcomeLabel}</strong>
-                          <span>{formatGroupPosition(scenario.projectedPosition)} · {scenario.projectedStats.pts} Pts · {scenario.projectedStats.gd > 0 ? "+" : ""}{scenario.projectedStats.gd} GD · {formatRoundOf32Slot(scenario.slotLabel)}</span>
+                          <strong>{route.label}</strong>
+                          <span>{route.scenarioCount} table combination{route.scenarioCount === 1 ? "" : "s"} · Pts {formatRange(route.pointsRange)} · GD {formatRange(route.gdRange)} · {route.status === "third" ? "Best-third route" : "Automatic route"}</span>
                         </div>
 
                         <div className="scenario-matchup-flow">
@@ -1938,14 +2066,22 @@ function GroupOpponentPreviewModal({
                             <strong>{preview.team.name}</strong>
                           </div>
                           <div className="scenario-match-bridge">
-                            <span>M{scenario.matchNumber}</span>
+                            <span>{route.matchNumbers.length ? route.matchNumbers.map((matchNumber) => `M${matchNumber}`).join("/") : "TBD"}</span>
                             <i />
                             <small>Round of 32</small>
                           </div>
-                          <div className="scenario-opponent-slot">
-                            {scenario.opponent ? <Flag team={scenario.opponent} /> : <div className="preview-empty-flag">?</div>}
-                            <strong>{scenario.opponent?.name ?? "Pending"}</strong>
-                            <em>{formatRoundOf32Slot(scenario.opponentSlotLabel)}</em>
+                          <div className="scenario-opponent-slot route-opponent-pool">
+                            <em>{route.opponentSlotLabels.length ? route.opponentSlotLabels.join(", ") : "Opponent slot pending"}</em>
+                            <div className="possible-opponent-list">
+                              {route.possibleOpponents.slice(0, 6).map((opponent) => (
+                                <span className="possible-opponent-chip" key={`${route.key}-${opponent.name}`}>
+                                  <Flag team={opponent} />
+                                  <strong>{opponent.name}</strong>
+                                </span>
+                              ))}
+                              {route.possibleOpponents.length === 0 && <span className="possible-opponent-empty">Pending</span>}
+                              {route.possibleOpponents.length > 6 && <span className="possible-opponent-more">+{route.possibleOpponents.length - 6} more</span>}
+                            </div>
                           </div>
                         </div>
                       </article>
@@ -1965,11 +2101,19 @@ function GroupOpponentPreviewModal({
     </div>
   );
 }
+function formatOrdinal(position: number) {
+  if (position === 1) return "1st";
+  if (position === 2) return "2nd";
+  if (position === 3) return "3rd";
+  return `${position}th`;
+}
+
 function formatGroupPosition(position: number) {
-  if (position === 1) return "1st in group";
-  if (position === 2) return "2nd in group";
-  if (position === 3) return "3rd in group";
-  return `${position}th in group`;
+  return `${formatOrdinal(position)} in group`;
+}
+
+function formatRange([minimum, maximum]: [number, number]) {
+  return minimum === maximum ? `${minimum}` : `${minimum}-${maximum}`;
 }
 
 function GuideModal({ onClose }: { onClose: () => void }) {

@@ -586,6 +586,55 @@
   line-height: 1.25;
 }
 
+.route-opponent-pool {
+  align-content: start;
+  justify-items: stretch;
+}
+
+.possible-opponent-list {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+}
+
+.possible-opponent-chip {
+  display: grid;
+  grid-template-columns: 25px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 4px 5px;
+  text-align: left;
+}
+
+.possible-opponent-chip .official-flag {
+  width: 25px;
+  height: 17px;
+}
+
+.possible-opponent-chip strong {
+  overflow: hidden;
+  color: #17243a;
+  font-size: 9px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.possible-opponent-empty,
+.possible-opponent-more {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.7);
+  color: #69768a;
+  font-size: 9px;
+  font-weight: 850;
+}
+
 .scenario-match-bridge {
   display: grid;
   justify-items: center;
