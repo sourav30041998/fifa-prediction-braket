@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { getAnnexCAllocation } from "./fifaAnnexC";
 import {
+  calculateWinProbability,
   deterministicMatchRandom,
   pickProbableWinner,
   type PredictionRanking
@@ -395,6 +396,8 @@ type RoundOf32ScenarioPreview = RoundOf32SlotPreview & {
   outcome: RoundOf32ScenarioOutcome;
   outcomeLabel: string;
   projectedPosition: number;
+  projectedStats: TeamStats;
+  variantKey: string;
 };
 
 type RoundOf32TeamScenarioPreview = {
@@ -406,10 +409,18 @@ type RoundOf32TeamScenarioPreview = {
   scenarios: RoundOf32ScenarioPreview[];
 };
 
-const scenarioOutcomes: Array<{ outcome: Exclude<RoundOf32ScenarioOutcome, "exact">; label: string }> = [
-  { outcome: "win", label: "If they win" },
-  { outcome: "draw", label: "If they draw" },
-  { outcome: "loss", label: "If they lose" }
+const scenarioVariants: Array<{
+  outcome: Exclude<RoundOf32ScenarioOutcome, "exact">;
+  label: string;
+  variantKey: string;
+  teamGoals: number;
+  opponentGoals: number;
+}> = [
+  { outcome: "win", label: "If they win by 1", variantKey: "win-1", teamGoals: 1, opponentGoals: 0 },
+  { outcome: "win", label: "If they win big (+5 GD)", variantKey: "win-5", teamGoals: 5, opponentGoals: 0 },
+  { outcome: "draw", label: "If they draw", variantKey: "draw", teamGoals: 1, opponentGoals: 1 },
+  { outcome: "loss", label: "If they lose by 1", variantKey: "loss-1", teamGoals: 0, opponentGoals: 1 },
+  { outcome: "loss", label: "If they lose heavily (-5 GD)", variantKey: "loss-5", teamGoals: 0, opponentGoals: 5 }
 ];
 
 const roundOf16Sources: Record<number, [number, number]> = {
@@ -607,18 +618,95 @@ function getFixtureOpponent(team: Team, fixture?: GroupFixture) {
   return findTeamByCode(opponentCode);
 }
 
-function scoreForScenarioOutcome(
+function scoreForScenarioVariant(
   fixture: GroupFixture,
   team: Team,
-  outcome: Exclude<RoundOf32ScenarioOutcome, "exact">
+  variant: (typeof scenarioVariants)[number]
 ): ScorePrediction {
   const teamIsHome = fixture.homeCode === team.code;
-  if (outcome === "draw") return { home: 1, away: 1 };
-  const teamGoals = outcome === "win" ? 1 : 0;
-  const opponentGoals = outcome === "win" ? 0 : 1;
   return teamIsHome
-    ? { home: teamGoals, away: opponentGoals }
-    : { home: opponentGoals, away: teamGoals };
+    ? { home: variant.teamGoals, away: variant.opponentGoals }
+    : { home: variant.opponentGoals, away: variant.teamGoals };
+}
+
+function getGroupPositionsFromOrder(groupOrder: GroupOrder) {
+  return Object.fromEntries(
+    groups.flatMap((group) => groupOrder[group.id].map((teamName, index) => [teamName, index + 1]))
+  ) as Record<string, number>;
+}
+
+function predictFutureFixtureScore({
+  fixture,
+  stats,
+  rankings,
+  groupOrder
+}: {
+  fixture: GroupFixture;
+  stats: StatsMap;
+  rankings: RankingMap;
+  groupOrder: GroupOrder;
+}): ScorePrediction {
+  const homeTeam = findTeamByCode(fixture.homeCode);
+  const awayTeam = findTeamByCode(fixture.awayCode);
+  if (!homeTeam || !awayTeam) return { home: 1, away: 1 };
+
+  const homeWinProbability = calculateWinProbability(homeTeam, awayTeam, {
+    stats,
+    rankings,
+    groupPositions: getGroupPositionsFromOrder(groupOrder)
+  });
+  const probabilityGap = Math.abs(homeWinProbability - 0.5);
+
+  if (probabilityGap < 0.08) return { home: 1, away: 1 };
+
+  const favoriteIsHome = homeWinProbability > 0.5;
+  const favoriteGoals = probabilityGap > 0.22 ? 3 : probabilityGap > 0.14 ? 2 : 1;
+  const underdogGoals = favoriteGoals >= 3 ? 0 : 1;
+
+  return favoriteIsHome
+    ? { home: favoriteGoals, away: underdogGoals }
+    : { home: underdogGoals, away: favoriteGoals };
+}
+
+function buildFuturePredictions({
+  fixtures,
+  predictions,
+  stats,
+  rankings,
+  groupOrder,
+  overrides = {}
+}: {
+  fixtures: GroupFixture[];
+  predictions: ScorePredictions;
+  stats: StatsMap;
+  rankings: RankingMap;
+  groupOrder: GroupOrder;
+  overrides?: ScorePredictions;
+}) {
+  const futurePredictions: ScorePredictions = { ...predictions };
+
+  fixtures.forEach((fixture) => {
+    if (fixture.completed) return;
+    if (overrides[fixture.id]) {
+      futurePredictions[fixture.id] = overrides[fixture.id];
+      return;
+    }
+    if (futurePredictions[fixture.id]) return;
+    futurePredictions[fixture.id] = predictFutureFixtureScore({ fixture, stats, rankings, groupOrder });
+  });
+
+  return futurePredictions;
+}
+
+function buildGroupOrderFromStats(stats: StatsMap): GroupOrder {
+  return Object.fromEntries(
+    groups.map((group) => [
+      group.id,
+      [...group.teams]
+        .sort((left, right) => compareTeamsByProjectedStats(left, right, stats))
+        .map((team) => team.name)
+    ])
+  ) as GroupOrder;
 }
 
 function buildThirdOrderFromGroupOrder(groupOrder: GroupOrder, stats: StatsMap) {
@@ -629,37 +717,63 @@ function buildThirdOrderFromGroupOrder(groupOrder: GroupOrder, stats: StatsMap) 
     .map((team) => team.name);
 }
 
+function buildFutureTournamentState({
+  fixtures,
+  predictions,
+  stats,
+  rankings,
+  groupOrder,
+  overrides
+}: {
+  fixtures: GroupFixture[];
+  predictions: ScorePredictions;
+  stats: StatsMap;
+  rankings: RankingMap;
+  groupOrder: GroupOrder;
+  overrides?: ScorePredictions;
+}) {
+  const futurePredictions = buildFuturePredictions({ fixtures, predictions, stats, rankings, groupOrder, overrides });
+  const futureStats = calculateProjectedStats(fixtures, futurePredictions);
+  const futureGroupOrder = buildGroupOrderFromStats(futureStats);
+  const futureThirdOrder = buildThirdOrderFromGroupOrder(futureGroupOrder, futureStats);
+  const futureRoundOf32 = buildRoundOf32(futureGroupOrder, futureThirdOrder);
+
+  return { futurePredictions, futureStats, futureGroupOrder, futureThirdOrder, futureRoundOf32 };
+}
+
 function buildGroupOpponentPreviews({
   group,
   groupOrder,
-  roundOf32,
   stats,
   fixtures,
-  predictions
+  predictions,
+  rankings
 }: {
   group: Group;
   groupOrder: GroupOrder;
-  roundOf32: Map<number, OfficialMatch>;
   stats: StatsMap;
   fixtures: GroupFixture[];
   predictions: ScorePredictions;
+  rankings: RankingMap;
 }): RoundOf32TeamScenarioPreview[] {
-  const order = groupOrder[group.id] ?? group.teams.map((team) => team.name);
+  const baseFutureState = buildFutureTournamentState({ fixtures, predictions, stats, rankings, groupOrder });
+  const order = baseFutureState.futureGroupOrder[group.id] ?? groupOrder[group.id] ?? group.teams.map((team) => team.name);
 
   return order
-    .map((teamName, index) => {
+    .map((teamName) => {
       const team = findTeam(teamName);
       if (!team || team.groupId !== group.id) return null;
 
       const currentStats = stats[team.code] ?? emptyStats;
-      const currentPosition = index + 1;
+      const currentPosition = (groupOrder[group.id] ?? order).indexOf(team.name) + 1;
       const nextFixture = findNextFixtureForTeam(team, fixtures);
       const nextMatchOpponent = getFixtureOpponent(team, nextFixture);
 
       if (!nextFixture) {
-        const slot = getRoundOf32SlotPreview(team, roundOf32);
+        const slot = getRoundOf32SlotPreview(team, baseFutureState.futureRoundOf32);
         if (!slot) return null;
         const fixed = canTreatRoundOf32SlotAsExact(slot, fixtures);
+        const projectedStats = baseFutureState.futureStats[team.code] ?? currentStats;
         return {
           team,
           currentPosition,
@@ -668,33 +782,34 @@ function buildGroupOpponentPreviews({
           scenarios: [{
             ...slot,
             outcome: "exact",
-            outcomeLabel: fixed ? "Exact opponent" : "Current possible opponent",
-            projectedPosition: currentPosition
+            outcomeLabel: fixed ? "Exact opponent" : "Projected possible opponent",
+            projectedPosition: baseFutureState.futureGroupOrder[group.id].indexOf(team.name) + 1,
+            projectedStats,
+            variantKey: fixed ? "exact" : "future-projection"
           }]
         };
       }
 
-      const scenarios = scenarioOutcomes.flatMap(({ outcome, label }) => {
-        const scenarioPredictions = {
-          ...predictions,
-          [nextFixture.id]: scoreForScenarioOutcome(nextFixture, team, outcome)
-        };
-        const scenarioStats = calculateProjectedStats(fixtures, scenarioPredictions);
-        const scenarioGroupOrder = {
-          ...groupOrder,
-          [group.id]: [...group.teams]
-            .sort((left, right) => compareTeamsByProjectedStats(left, right, scenarioStats))
-            .map((candidate) => candidate.name)
-        };
-        const scenarioThirdOrder = buildThirdOrderFromGroupOrder(scenarioGroupOrder, scenarioStats);
-        const scenarioRoundOf32 = buildRoundOf32(scenarioGroupOrder, scenarioThirdOrder);
-        const slot = getRoundOf32SlotPreview(team, scenarioRoundOf32);
+      const scenarios = scenarioVariants.flatMap((variant) => {
+        const futureState = buildFutureTournamentState({
+          fixtures,
+          predictions,
+          stats,
+          rankings,
+          groupOrder,
+          overrides: {
+            [nextFixture.id]: scoreForScenarioVariant(nextFixture, team, variant)
+          }
+        });
+        const slot = getRoundOf32SlotPreview(team, futureState.futureRoundOf32);
         if (!slot) return [];
         return [{
           ...slot,
-          outcome,
-          outcomeLabel: label,
-          projectedPosition: scenarioGroupOrder[group.id].indexOf(team.name) + 1
+          outcome: variant.outcome,
+          outcomeLabel: variant.label,
+          projectedPosition: futureState.futureGroupOrder[group.id].indexOf(team.name) + 1,
+          projectedStats: futureState.futureStats[team.code] ?? emptyStats,
+          variantKey: variant.variantKey
         }];
       });
 
@@ -705,11 +820,12 @@ function buildGroupOpponentPreviews({
           scenario.matchNumber,
           scenario.slotLabel,
           scenario.opponent?.name ?? "pending",
-          scenario.opponentSlotLabel
+          scenario.opponentSlotLabel,
+          scenario.projectedPosition
         ].join("|"))
       );
       const fixed =
-        scenarios.length === scenarioOutcomes.length &&
+        scenarios.length === scenarioVariants.length &&
         uniqueMatchups.size === 1 &&
         canTreatRoundOf32SlotAsExact(scenarios[0], fixtures);
 
@@ -720,13 +836,12 @@ function buildGroupOpponentPreviews({
         fixed,
         nextMatchOpponent,
         scenarios: fixed
-          ? [{ ...scenarios[0], outcome: "exact", outcomeLabel: "Exact opponent" }]
+          ? [{ ...scenarios[0], outcome: "exact", outcomeLabel: "Exact opponent", variantKey: "exact" }]
           : scenarios
       };
     })
     .filter((preview): preview is RoundOf32TeamScenarioPreview => Boolean(preview));
 }
-
 function LiveTablePredictorApp() {
   const initialOrder = useMemo(loadGroupOrder, []);
   const cache = useMemo(loadCachedStats, []);
@@ -1098,10 +1213,10 @@ function LiveTablePredictorApp() {
         <GroupOpponentPreviewModal
           group={groups.find((group) => group.id === opponentPreviewGroup)!}
           groupOrder={groupOrder}
-          roundOf32={roundOf32}
           stats={projectedStats}
           fixtures={fixtures}
           predictions={scorePredictions}
+          rankings={rankings}
           onClose={() => setOpponentPreviewGroup(null)}
         />
       )}
@@ -1727,21 +1842,21 @@ function GroupMatchesModal({
 function GroupOpponentPreviewModal({
   group,
   groupOrder,
-  roundOf32,
   stats,
   fixtures,
   predictions,
+  rankings,
   onClose
 }: {
   group: Group;
   groupOrder: GroupOrder;
-  roundOf32: Map<number, OfficialMatch>;
   stats: StatsMap;
   fixtures: GroupFixture[];
   predictions: ScorePredictions;
+  rankings: RankingMap;
   onClose: () => void;
 }) {
-  const previews = buildGroupOpponentPreviews({ group, groupOrder, roundOf32, stats, fixtures, predictions });
+  const previews = buildGroupOpponentPreviews({ group, groupOrder, stats, fixtures, predictions, rankings });
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -1767,7 +1882,7 @@ function GroupOpponentPreviewModal({
           <div>
             <span className="eyebrow">GROUP {group.id} · SYSTEM-GENERATED</span>
             <h2 id="opponent-preview-title">Round of 32 scenario routes</h2>
-            <p>Only teams with at least one qualifying route are shown. Each route recalculates this group, the third-place table, and the official Round of 32 mapping.</p>
+            <p>Only teams with at least one qualifying route are shown. Each route first builds projected final tables for every group, then maps the official Round of 32 path.</p>
           </div>
           <button className="modal-close" aria-label="Close Round of 32 opponent preview" onClick={onClose} type="button"><X size={22} /></button>
         </header>
@@ -1775,7 +1890,7 @@ function GroupOpponentPreviewModal({
         <div className="opponent-preview-body">
           <div className="opponent-preview-system-note">
             <Sparkles size={16} />
-            <span>System-generated preview. Win/draw/loss routes use a simple 1-goal model for the team&apos;s next group match and hide eliminated outcomes.</span>
+            <span>System-generated preview. Remaining matches are projected first; Win/Loss routes include normal and big goal-difference margins so tied points can change the path.</span>
           </div>
 
           {previews.length === 0 ? (
@@ -1811,10 +1926,10 @@ function GroupOpponentPreviewModal({
 
                   <div className={preview.fixed ? "scenario-exact-grid" : "scenario-outcome-grid"}>
                     {preview.scenarios.map((scenario) => (
-                      <article className="scenario-outcome-card" key={`${preview.team.name}-${scenario.outcome}-${scenario.matchNumber}`}>
+                      <article className="scenario-outcome-card" key={`${preview.team.name}-${scenario.variantKey}-${scenario.matchNumber}`}>
                         <div className="scenario-outcome-label">
                           <strong>{scenario.outcomeLabel}</strong>
-                          <span>{formatGroupPosition(scenario.projectedPosition)} · {formatRoundOf32Slot(scenario.slotLabel)}</span>
+                          <span>{formatGroupPosition(scenario.projectedPosition)} · {scenario.projectedStats.pts} Pts · {scenario.projectedStats.gd > 0 ? "+" : ""}{scenario.projectedStats.gd} GD · {formatRoundOf32Slot(scenario.slotLabel)}</span>
                         </div>
 
                         <div className="scenario-matchup-flow">
