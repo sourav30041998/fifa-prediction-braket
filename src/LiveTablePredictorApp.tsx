@@ -352,6 +352,29 @@ function compareTeamsByProjectedStats(a: Team, b: Team, stats: StatsMap) {
   );
 }
 
+function hasPlayedTableData(stats: StatsMap) {
+  return allTeams.some((team) => (stats[team.code]?.mp ?? 0) > 0);
+}
+
+function buildRankedGroupOrderFromStats(stats: StatsMap): GroupOrder {
+  return Object.fromEntries(
+    groups.map((group) => [
+      group.id,
+      [...group.teams]
+        .sort((left, right) => compareTeamsByProjectedStats(left, right, stats))
+        .map((team) => team.name)
+    ])
+  ) as GroupOrder;
+}
+
+function groupOrderKey(order: GroupOrder) {
+  return groups.map((group) => (order[group.id] ?? []).join(",")).join("|");
+}
+
+function sameGroupOrder(left: GroupOrder, right: GroupOrder) {
+  return groupOrderKey(left) === groupOrderKey(right);
+}
+
 function parseFifaStandings(rows: FifaStanding[]) {
   return Object.fromEntries(
     rows.flatMap((row) => {
@@ -1121,6 +1144,26 @@ function LiveTablePredictorApp() {
     () => fixtures.length ? calculateProjectedStats(fixtures, scorePredictions) : stats,
     [fixtures, scorePredictions, stats]
   );
+  const hasProjectedTableData = useMemo(
+    () => hasPlayedTableData(projectedStats),
+    [projectedStats]
+  );
+  const rankedGroupOrder = useMemo(
+    () => buildRankedGroupOrderFromStats(projectedStats),
+    [projectedStats]
+  );
+  const rankedGroupOrderKey = useMemo(
+    () => groupOrderKey(rankedGroupOrder),
+    [rankedGroupOrder]
+  );
+
+  useEffect(() => {
+    if (!hasProjectedTableData) return;
+    setGroupOrder((current) => sameGroupOrder(current, rankedGroupOrder) ? current : rankedGroupOrder);
+    setAutoPickSnapshot(null);
+    setAutoPickCache(null);
+  }, [hasProjectedTableData, rankedGroupOrderKey]);
+
   const rankedThirdNames = useMemo(
     () => currentThirdNames
       .map(findTeam)
