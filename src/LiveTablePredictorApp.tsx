@@ -551,6 +551,32 @@ function hasEveryGroupReachedSecondMatch(stats: StatsMap) {
   );
 }
 
+function hasGroupCompletedAllMatches(groupId: string, fixtures: GroupFixture[]) {
+  const groupFixtures = fixtures.filter((fixture) => fixture.groupId === groupId);
+  return groupFixtures.length >= 6 && groupFixtures.every((fixture) => fixture.completed);
+}
+
+function hasEveryGroupCompletedAllMatches(fixtures: GroupFixture[]) {
+  return groups.every((group) => hasGroupCompletedAllMatches(group.id, fixtures));
+}
+
+function getSlotSourceGroups(label: string) {
+  return label
+    .slice(1)
+    .split("")
+    .filter((groupId) => groups.some((group) => group.id === groupId));
+}
+
+function canTreatRoundOf32SlotAsExact(slot: RoundOf32SlotPreview, fixtures: GroupFixture[]) {
+  const labels = [slot.slotLabel, slot.opponentSlotLabel];
+  if (labels.some((label) => label.startsWith("3"))) {
+    return hasEveryGroupCompletedAllMatches(fixtures);
+  }
+
+  const sourceGroups = labels.flatMap(getSlotSourceGroups);
+  return sourceGroups.length > 0 && sourceGroups.every((groupId) => hasGroupCompletedAllMatches(groupId, fixtures));
+}
+
 function getRoundOf32SlotPreview(team: Team, roundOf32: Map<number, OfficialMatch>): RoundOf32SlotPreview | null {
   for (const match of roundOf32.values()) {
     const teamIndex = match.teams.findIndex((candidate) => candidate?.name === team.name);
@@ -633,12 +659,18 @@ function buildGroupOpponentPreviews({
       if (!nextFixture) {
         const slot = getRoundOf32SlotPreview(team, roundOf32);
         if (!slot) return null;
+        const fixed = canTreatRoundOf32SlotAsExact(slot, fixtures);
         return {
           team,
           currentPosition,
           currentStats,
-          fixed: true,
-          scenarios: [{ ...slot, outcome: "exact", outcomeLabel: "Exact opponent", projectedPosition: currentPosition }]
+          fixed,
+          scenarios: [{
+            ...slot,
+            outcome: "exact",
+            outcomeLabel: fixed ? "Exact opponent" : "Current possible opponent",
+            projectedPosition: currentPosition
+          }]
         };
       }
 
@@ -676,7 +708,10 @@ function buildGroupOpponentPreviews({
           scenario.opponentSlotLabel
         ].join("|"))
       );
-      const fixed = scenarios.length === scenarioOutcomes.length && uniqueMatchups.size === 1;
+      const fixed =
+        scenarios.length === scenarioOutcomes.length &&
+        uniqueMatchups.size === 1 &&
+        canTreatRoundOf32SlotAsExact(scenarios[0], fixtures);
 
       return {
         team,
@@ -1065,7 +1100,7 @@ function LiveTablePredictorApp() {
           groupOrder={groupOrder}
           roundOf32={roundOf32}
           stats={projectedStats}
-          fixtures={fixtures.filter((fixture) => fixture.groupId === opponentPreviewGroup)}
+          fixtures={fixtures}
           predictions={scorePredictions}
           onClose={() => setOpponentPreviewGroup(null)}
         />
@@ -1768,10 +1803,10 @@ function GroupOpponentPreviewModal({
 
                   <p className="scenario-team-note">
                     {preview.fixed
-                      ? "The current projection has a fixed Round of 32 matchup for this team."
+                      ? "Both matchup source groups are complete, so this Round of 32 opponent is locked."
                       : preview.nextMatchOpponent
                         ? <>Next group match: <strong>{preview.team.name}</strong> vs <strong>{preview.nextMatchOpponent.name}</strong></>
-                        : "Scenario route based on the current projection."}
+                        : "The team side is settled, but the opponent side still has group matches left."}
                   </p>
 
                   <div className={preview.fixed ? "scenario-exact-grid" : "scenario-outcome-grid"}>
