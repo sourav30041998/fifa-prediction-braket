@@ -874,6 +874,38 @@ function canThirdPlaceStateQualify(groupId: string, state: GroupOutcomeState, ou
   return guaranteedAbove < 8;
 }
 
+function isThirdCandidateGuaranteedToQualify(groupId: string, candidate: { team: Team; stats: TeamStats }, outcomeMap: Record<string, GroupOutcomeState[]>) {
+  const groupsThatCanFinishAbove = groups
+    .filter((group) => group.id !== groupId)
+    .filter((group) =>
+      outcomeMap[group.id]
+        ?.map((state) => getThirdCandidateForState(group.id, state))
+        .some((other) => other && compareStatsForRanking(other.stats, candidate.stats) <= 0)
+    ).length;
+
+  return groupsThatCanFinishAbove < 8;
+}
+
+function getThirdGroupStatuses(outcomeMap: Record<string, GroupOutcomeState[]>) {
+  return Object.fromEntries(
+    groups.map((group) => {
+      const candidates = (outcomeMap[group.id] ?? [])
+        .map((state) => getThirdCandidateForState(group.id, state))
+        .filter((candidate): candidate is { groupId: string; team: Team; stats: TeamStats } => Boolean(candidate));
+      const possible = (outcomeMap[group.id] ?? []).some((state) => canThirdPlaceStateQualify(group.id, state, outcomeMap));
+      const guaranteed = candidates.length > 0 && candidates.every((candidate) =>
+        isThirdCandidateGuaranteedToQualify(group.id, candidate, outcomeMap)
+      );
+      const thirdTeamNames = new Set(candidates.map((candidate) => candidate.team.name));
+
+      return [group.id, {
+        possible,
+        guaranteed,
+        thirdTeamLocked: thirdTeamNames.size === 1
+      }];
+    })
+  ) as Record<string, { possible: boolean; guaranteed: boolean; thirdTeamLocked: boolean }>;
+}
 function teamCanFinishPosition(states: GroupOutcomeState[], teamName: string, position: number) {
   return states.some((state) => state.order[position - 1] === teamName);
 }
@@ -974,9 +1006,24 @@ function getPossibleThirdQualifyingGroups(outcomeMap: Record<string, GroupOutcom
     .map((group) => group.id);
 }
 
-function getPossibleThirdSourcesForWinner(winnerGroup: keyof ReturnType<typeof getAnnexCAllocation>, possibleThirdGroups: string[]) {
+function chooseQualifyingThirdGroupSets(possibleThirdGroups: string[], guaranteedThirdGroups: string[], requiredGroup?: string) {
+  const required = new Set(guaranteedThirdGroups);
+  if (requiredGroup) required.add(requiredGroup);
+  if ([...required].some((groupId) => !possibleThirdGroups.includes(groupId)) || required.size > 8) return [];
+
+  const optionalGroups = possibleThirdGroups.filter((groupId) => !required.has(groupId));
+  return chooseGroupSets(optionalGroups, 8 - required.size).map((optionalSet) =>
+    [...required, ...optionalSet].sort()
+  );
+}
+
+function getPossibleThirdSourcesForWinner(
+  winnerGroup: keyof ReturnType<typeof getAnnexCAllocation>,
+  possibleThirdGroups: string[],
+  guaranteedThirdGroups: string[]
+) {
   const sources = new Set<string>();
-  chooseGroupSets(possibleThirdGroups, 8).forEach((groupSet) => {
+  chooseQualifyingThirdGroupSets(possibleThirdGroups, guaranteedThirdGroups).forEach((groupSet) => {
     try {
       sources.add(getAnnexCAllocation(groupSet)[winnerGroup]);
     } catch {
@@ -986,9 +1033,9 @@ function getPossibleThirdSourcesForWinner(winnerGroup: keyof ReturnType<typeof g
   return [...sources];
 }
 
-function getPossibleWinnerGroupsForThird(thirdGroupId: string, possibleThirdGroups: string[]) {
+function getPossibleWinnerGroupsForThird(thirdGroupId: string, possibleThirdGroups: string[], guaranteedThirdGroups: string[]) {
   const winners = new Set<keyof ReturnType<typeof getAnnexCAllocation>>();
-  chooseGroupSets(possibleThirdGroups, 8, thirdGroupId).forEach((groupSet) => {
+  chooseQualifyingThirdGroupSets(possibleThirdGroups, guaranteedThirdGroups, thirdGroupId).forEach((groupSet) => {
     try {
       const allocation = getAnnexCAllocation(groupSet);
       Object.entries(allocation).forEach(([winnerGroup, sourceGroup]) => {
@@ -1004,7 +1051,8 @@ function getPossibleWinnerGroupsForThird(thirdGroupId: string, possibleThirdGrou
 function buildAutomaticRouteOpponents(
   slotLabel: string,
   outcomeMap: Record<string, GroupOutcomeState[]>,
-  possibleThirdGroups: string[]
+  possibleThirdGroups: string[],
+  guaranteedThirdGroups: string[]
 ) {
   const slot = automaticRoundOf32Slots[slotLabel];
   if (!slot) return { matchNumbers: [] as number[], opponentSlotLabels: [] as string[], possibleOpponents: [] as Team[] };
@@ -1019,7 +1067,7 @@ function buildAutomaticRouteOpponents(
     };
   }
 
-  const sourceGroups = getPossibleThirdSourcesForWinner(slot.thirdOpponentForWinner!, possibleThirdGroups);
+  const sourceGroups = getPossibleThirdSourcesForWinner(slot.thirdOpponentForWinner!, possibleThirdGroups, guaranteedThirdGroups);
   return {
     matchNumbers: [slot.matchNumber],
     opponentSlotLabels: sourceGroups.map((groupId) => `3${groupId}`),
@@ -1030,9 +1078,10 @@ function buildAutomaticRouteOpponents(
 function buildThirdRouteOpponents(
   groupId: string,
   outcomeMap: Record<string, GroupOutcomeState[]>,
-  possibleThirdGroups: string[]
+  possibleThirdGroups: string[],
+  guaranteedThirdGroups: string[]
 ) {
-  const winnerGroups = getPossibleWinnerGroupsForThird(groupId, possibleThirdGroups);
+  const winnerGroups = getPossibleWinnerGroupsForThird(groupId, possibleThirdGroups, guaranteedThirdGroups);
   const matchNumbers = winnerGroups
     .map((winnerGroup) => automaticRoundOf32Slots[`1${winnerGroup}`]?.matchNumber)
     .filter((matchNumber): matchNumber is number => Boolean(matchNumber));
@@ -1058,8 +1107,10 @@ function getCurrentRoundOf32Route(team: Team, slotLabel: string, roundOf32: Map<
   };
 }
 
-function isThirdPlaceFieldLocked(fixtures: GroupFixture[]) {
-  return hasEveryGroupCompletedAllMatches(fixtures);
+function getThirdGroupIdsFromRoute(slotLabel: string, opponentSlotLabels: string[]) {
+  return [slotLabel, ...opponentSlotLabels]
+    .filter((label) => label.startsWith("3"))
+    .map((label) => label.slice(1));
 }
 
 function getLockedCurrentThirdRoute(
@@ -1067,14 +1118,28 @@ function getLockedCurrentThirdRoute(
   slotLabel: string,
   opponents: { matchNumbers: number[]; opponentSlotLabels: string[]; possibleOpponents: Team[] },
   isPositionLocked: boolean,
-  fixtures: GroupFixture[],
+  thirdGroupStatuses: Record<string, { possible: boolean; guaranteed: boolean; thirdTeamLocked: boolean }>,
   roundOf32: Map<number, OfficialMatch>
 ) {
   if (!isPositionLocked || !routeInvolvesThirdPlace(slotLabel, opponents.opponentSlotLabels)) return null;
-  if (!isThirdPlaceFieldLocked(fixtures)) return null;
-  return getCurrentRoundOf32Route(team, slotLabel, roundOf32);
-}
 
+  const currentRoute = getCurrentRoundOf32Route(team, slotLabel, roundOf32);
+  if (!currentRoute) return null;
+
+  const thirdGroupIds = getThirdGroupIdsFromRoute(slotLabel, currentRoute.opponentSlotLabels);
+  const thirdGroupsAreGuaranteed = thirdGroupIds.length > 0 && thirdGroupIds.every((groupId) => {
+    const status = thirdGroupStatuses[groupId];
+    return status?.guaranteed && status.thirdTeamLocked;
+  });
+  if (!thirdGroupsAreGuaranteed) return null;
+
+  const routeStillMapsToCurrentSlot = opponents.opponentSlotLabels.length === 1 &&
+    opponents.opponentSlotLabels[0] === currentRoute.opponentSlotLabels[0];
+  const routeStillMapsToCurrentOpponent = opponents.possibleOpponents.length === 1 &&
+    opponents.possibleOpponents[0]?.name === currentRoute.possibleOpponents[0]?.name;
+
+  return routeStillMapsToCurrentSlot && routeStillMapsToCurrentOpponent ? currentRoute : null;
+}
 function buildQualificationRoute({
   team,
   states,
@@ -1188,7 +1253,9 @@ function buildGroupOpponentPreviews({
   }
 
   const outcomeMap = buildGroupOutcomeMap(fixtures, stats);
+  const thirdGroupStatuses = getThirdGroupStatuses(outcomeMap);
   const possibleThirdGroups = getPossibleThirdQualifyingGroups(outcomeMap);
+  const guaranteedThirdGroups = groups.filter((group) => thirdGroupStatuses[group.id]?.guaranteed).map((group) => group.id);
   const groupStates = outcomeMap[group.id] ?? [];
   const currentOrder = groupOrder[group.id] ?? group.teams.map((team) => team.name);
 
@@ -1201,9 +1268,9 @@ function buildGroupOpponentPreviews({
       [1, 2].forEach((position) => {
         const positionStates = getTeamStatesForPosition(groupStates, team.name, position);
         const slotLabel = `${position}${group.id}`;
-        const broadOpponents = buildAutomaticRouteOpponents(slotLabel, outcomeMap, possibleThirdGroups);
+        const broadOpponents = buildAutomaticRouteOpponents(slotLabel, outcomeMap, possibleThirdGroups, guaranteedThirdGroups);
         const isPositionLocked = isSlotPositionLocked(slotLabel, fixtures);
-        const currentOpponents = getLockedCurrentThirdRoute(team, slotLabel, broadOpponents, isPositionLocked, fixtures, roundOf32);
+        const currentOpponents = getLockedCurrentThirdRoute(team, slotLabel, broadOpponents, isPositionLocked, thirdGroupStatuses, roundOf32);
         const opponents = currentOpponents ?? broadOpponents;
         const isFinalRoute = Boolean(currentOpponents) || isRoundOf32RouteFixed(slotLabel, opponents.opponentSlotLabels, fixtures);
         const route = buildQualificationRoute({
@@ -1223,9 +1290,9 @@ function buildGroupOpponentPreviews({
 
       const thirdStates = getTeamQualifiedThirdStates(group.id, groupStates, team.name, outcomeMap);
       const thirdSlotLabel = `3${group.id}`;
-      const broadThirdOpponents = buildThirdRouteOpponents(group.id, outcomeMap, possibleThirdGroups);
+      const broadThirdOpponents = buildThirdRouteOpponents(group.id, outcomeMap, possibleThirdGroups, guaranteedThirdGroups);
       const isThirdPositionLocked = isSlotPositionLocked(thirdSlotLabel, fixtures);
-      const currentThirdOpponents = getLockedCurrentThirdRoute(team, thirdSlotLabel, broadThirdOpponents, isThirdPositionLocked, fixtures, roundOf32);
+      const currentThirdOpponents = getLockedCurrentThirdRoute(team, thirdSlotLabel, broadThirdOpponents, isThirdPositionLocked, thirdGroupStatuses, roundOf32);
       const thirdOpponents = currentThirdOpponents ?? broadThirdOpponents;
       const isThirdFinalRoute = Boolean(currentThirdOpponents) || isRoundOf32RouteFixed(thirdSlotLabel, thirdOpponents.opponentSlotLabels, fixtures);
       const thirdRoute = buildQualificationRoute({
