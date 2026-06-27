@@ -287,17 +287,15 @@ function getFixtureLifecycle(match: FifaMatchResult, hasScore: boolean, now = Da
   const kickoffTime = new Date(match.StartTime).getTime();
   const hasValidKickoff = Number.isFinite(kickoffTime);
   const resultStatus = Number(match.Result ?? 0);
-  const isFinalResult = resultStatus >= 4;
+  const isFinalResult = hasScore && resultStatus >= 4;
   const hasKickedOff = hasValidKickoff && kickoffTime <= now;
   const isInsideLiveWindow = hasKickedOff && now - kickoffTime <= liveMatchWindowMs;
-  const statusLooksLive = resultStatus > 0 && resultStatus < 4;
-  const live = !isFinalResult && (statusLooksLive || isInsideLiveWindow);
-  const completed = hasScore && (isFinalResult || (hasKickedOff && !live));
+  const live = hasScore && !isFinalResult && isInsideLiveWindow;
+  const completed = hasScore && (isFinalResult || (hasKickedOff && !isInsideLiveWindow));
   const status: FixtureStatus = completed ? "completed" : live ? "live" : "scheduled";
 
   return { completed, live, status, resultStatus };
 }
-
 function parseFifaFixtures(rows: FifaStanding[]) {
   const teamCodeById = Object.fromEntries(
     rows.flatMap((row) => row.Team?.IdTeam && row.Team.IdCountry ? [[row.Team.IdTeam, row.Team.IdCountry]] : [])
@@ -338,9 +336,8 @@ function calculateProjectedStats(fixtures: GroupFixture[], predictions: ScorePre
 
   fixtures.forEach((fixture) => {
     const predicted = predictions[fixture.id];
-    const liveNow = isFixtureLiveNow(fixture);
-    const home = fixture.completed ? fixture.homeScore : liveNow ? undefined : predicted?.home;
-    const away = fixture.completed ? fixture.awayScore : liveNow ? undefined : predicted?.away;
+    const home = fixture.completed ? fixture.homeScore : fixture.live ? undefined : predicted?.home;
+    const away = fixture.completed ? fixture.awayScore : fixture.live ? undefined : predicted?.away;
     if (home === null || away === null || home === undefined || away === undefined) return;
 
     const homeStats = projected[fixture.homeCode];
@@ -743,31 +740,13 @@ function hasFixtureScore(fixture: GroupFixture) {
   return fixture.homeScore !== null && fixture.awayScore !== null;
 }
 
-function isFixtureLiveNow(fixture: GroupFixture, now = Date.now()) {
-  const kickoffTime = new Date(fixture.kickoff).getTime();
-  const hasValidKickoff = Number.isFinite(kickoffTime);
-  const hasKickedOff = hasValidKickoff && kickoffTime <= now;
-  const isInsideLiveWindow = hasKickedOff && now - kickoffTime <= liveMatchWindowMs;
-  const resultStatus = Number(fixture.resultStatus ?? 0);
-  const isExplicitFinal = fixture.status === "completed" || resultStatus >= 4;
-  const statusLooksLive = fixture.status === "live" || fixture.live || (resultStatus > 0 && resultStatus < 4);
-
-  return !isExplicitFinal && (statusLooksLive || isInsideLiveWindow);
-}
-
-function getFixtureDisplayScore(fixture: GroupFixture): [number, number] | null {
-  if (fixture.homeScore !== null && fixture.awayScore !== null) return [fixture.homeScore, fixture.awayScore];
-  if (isFixtureLiveNow(fixture)) return [fixture.homeScore ?? 0, fixture.awayScore ?? 0];
-  return null;
-}
-
 function getLiveFixtureForTeam(team: Team, fixtures: GroupFixture[]) {
   return fixtures.find((fixture) =>
-    isFixtureLiveNow(fixture) &&
+    fixture.live &&
+    hasFixtureScore(fixture) &&
     (fixture.homeCode === team.code || fixture.awayCode === team.code)
   );
 }
-
 function cloneStatsMap(stats: StatsMap) {
   return Object.fromEntries(
     allTeams.map((team) => [team.code, { ...(stats[team.code] ?? emptyStats) }])
@@ -1931,14 +1910,13 @@ function LiveGroupCard({
 }
 
 function LiveScoreBadge({ team, fixture }: { team: Team; fixture: GroupFixture }) {
-  const score = getFixtureDisplayScore(fixture);
-  if (!score) return null;
+  if (!hasFixtureScore(fixture)) return null;
 
   const isHomeTeam = fixture.homeCode === team.code;
-  const [homeScore, awayScore] = score;
-  const ownScore = isHomeTeam ? homeScore : awayScore;
-  const opponentScore = isHomeTeam ? awayScore : homeScore;
+  const ownScore = isHomeTeam ? fixture.homeScore : fixture.awayScore;
+  const opponentScore = isHomeTeam ? fixture.awayScore : fixture.homeScore;
   const opponent = findTeamByCode(isHomeTeam ? fixture.awayCode : fixture.homeCode);
+  if (ownScore === null || opponentScore === null) return null;
 
   return (
     <span className="live-score-badge" title={`Live vs ${opponent?.name ?? "opponent"}`}>
@@ -2245,8 +2223,7 @@ function GroupMatchesModal({
             const awayTeam = findTeamByCode(fixture.awayCode)!;
             const kickoff = new Date(fixture.kickoff);
             const isPast = kickoff.getTime() <= Date.now();
-            const liveScore = getFixtureDisplayScore(fixture);
-            const isLive = isFixtureLiveNow(fixture);
+            const isLive = Boolean(fixture.live && hasFixtureScore(fixture));
             const canPredict = !fixture.completed && !isLive && !isPast;
             const predicted = draft[fixture.id] ?? { home: 0, away: 0 };
 
@@ -2263,7 +2240,7 @@ function GroupMatchesModal({
                 </div>
                 <div className="fixture-scoreline">
                   {fixture.completed || isLive ? (
-                    <><strong>{liveScore?.[0] ?? fixture.homeScore}</strong><span>–</span><strong>{liveScore?.[1] ?? fixture.awayScore}</strong>{isLive && <em className="fixture-live-pill">LIVE</em>}</>
+                    <><strong>{fixture.homeScore}</strong><span>–</span><strong>{fixture.awayScore}</strong>{isLive && <em className="fixture-live-pill">LIVE</em>}</>
                   ) : canPredict ? (
                     <>
                       <input aria-label={`${homeTeam.name} predicted goals`} inputMode="numeric" max="20" min="0" onChange={(event) => updateScore(fixture.id, "home", Number(event.target.value))} type="number" value={predicted.home} />
