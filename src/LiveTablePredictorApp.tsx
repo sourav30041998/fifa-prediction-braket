@@ -694,6 +694,7 @@ function getRouteMetaLabel(route: QualificationRoute) {
 function getPreviewRouteNote(preview: RoundOf32TeamScenarioPreview, manualSimulationMode: boolean) {
   if (manualSimulationMode) return "This route is taken directly from your current Round of 32 bracket mapping.";
   if (preview.routes.every((route) => route.isFinalRoute)) return "This matchup follows the current FIFA Round of 32 mapping.";
+  if (preview.routes.some((route) => routeInvolvesThirdPlace(route.slotLabel, route.opponentSlotLabels))) return "The team position may be set, but the third-place table can still change this Round of 32 route.";
   if (preview.routes.every((route) => route.isPositionLocked)) return "This team has finished its group position; remaining uncertainty is only the opponent route.";
   return "Possible route count is based on all result combinations for the remaining matches in this group.";
 }
@@ -1057,14 +1058,20 @@ function getCurrentRoundOf32Route(team: Team, slotLabel: string, roundOf32: Map<
   };
 }
 
+function isThirdPlaceFieldLocked(fixtures: GroupFixture[]) {
+  return hasEveryGroupCompletedAllMatches(fixtures);
+}
+
 function getLockedCurrentThirdRoute(
   team: Team,
   slotLabel: string,
   opponents: { matchNumbers: number[]; opponentSlotLabels: string[]; possibleOpponents: Team[] },
   isPositionLocked: boolean,
+  fixtures: GroupFixture[],
   roundOf32: Map<number, OfficialMatch>
 ) {
   if (!isPositionLocked || !routeInvolvesThirdPlace(slotLabel, opponents.opponentSlotLabels)) return null;
+  if (!isThirdPlaceFieldLocked(fixtures)) return null;
   return getCurrentRoundOf32Route(team, slotLabel, roundOf32);
 }
 
@@ -1196,7 +1203,7 @@ function buildGroupOpponentPreviews({
         const slotLabel = `${position}${group.id}`;
         const broadOpponents = buildAutomaticRouteOpponents(slotLabel, outcomeMap, possibleThirdGroups);
         const isPositionLocked = isSlotPositionLocked(slotLabel, fixtures);
-        const currentOpponents = getLockedCurrentThirdRoute(team, slotLabel, broadOpponents, isPositionLocked, roundOf32);
+        const currentOpponents = getLockedCurrentThirdRoute(team, slotLabel, broadOpponents, isPositionLocked, fixtures, roundOf32);
         const opponents = currentOpponents ?? broadOpponents;
         const isFinalRoute = Boolean(currentOpponents) || isRoundOf32RouteFixed(slotLabel, opponents.opponentSlotLabels, fixtures);
         const route = buildQualificationRoute({
@@ -1218,7 +1225,7 @@ function buildGroupOpponentPreviews({
       const thirdSlotLabel = `3${group.id}`;
       const broadThirdOpponents = buildThirdRouteOpponents(group.id, outcomeMap, possibleThirdGroups);
       const isThirdPositionLocked = isSlotPositionLocked(thirdSlotLabel, fixtures);
-      const currentThirdOpponents = getLockedCurrentThirdRoute(team, thirdSlotLabel, broadThirdOpponents, isThirdPositionLocked, roundOf32);
+      const currentThirdOpponents = getLockedCurrentThirdRoute(team, thirdSlotLabel, broadThirdOpponents, isThirdPositionLocked, fixtures, roundOf32);
       const thirdOpponents = currentThirdOpponents ?? broadThirdOpponents;
       const isThirdFinalRoute = Boolean(currentThirdOpponents) || isRoundOf32RouteFixed(thirdSlotLabel, thirdOpponents.opponentSlotLabels, fixtures);
       const thirdRoute = buildQualificationRoute({
