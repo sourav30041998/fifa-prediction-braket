@@ -169,11 +169,6 @@
   border-left: 4px solid #0d9c72;
 }
 
-.group-fixture.live {
-  border-left: 4px solid #e81946;
-  background: linear-gradient(90deg, #fff5f7, white 35%);
-}
-
 .group-fixture.predictable {
   border-left: 4px solid var(--orange);
   background: linear-gradient(90deg, #fffaf5, white 35%);
@@ -211,10 +206,6 @@
 
 .predictable .fixture-meta > em {
   color: #d35600;
-}
-
-.live .fixture-meta > em {
-  color: #e81946;
 }
 
 .awaiting .fixture-meta > em {
@@ -270,17 +261,6 @@
 .fixture-scoreline > span {
   color: #8490a1;
   font-weight: 900;
-}
-
-.fixture-live-pill {
-  border-radius: 999px;
-  background: #fff2f5;
-  padding: 4px 7px;
-  color: #b31236;
-  font-size: 8px;
-  font-style: normal;
-  font-weight: 950;
-  letter-spacing: 0.05em;
 }
 
 .fixture-scoreline input {

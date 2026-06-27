@@ -148,10 +148,6 @@
   background: linear-gradient(90deg, rgba(18, 72, 223, 0.1), white 73%);
 }
 
-.live-team-row.live-match {
-  background: linear-gradient(90deg, rgba(234, 43, 80, 0.14), white 73%);
-}
-
 .live-team-row.dragging {
   opacity: 0.48;
   transform: scale(0.988);
@@ -160,50 +156,13 @@
 .live-team-cell {
   display: grid;
   min-width: 0;
-  grid-template-columns: 18px minmax(37px, auto) minmax(0, 1fr);
+  grid-template-columns: 18px 37px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   text-align: left;
 }
 
-.live-team-flag-score {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 5px;
-}
-
-.live-score-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  border: 1px solid rgba(234, 43, 80, 0.28);
-  border-radius: 999px;
-  background: #fff2f5;
-  padding: 2px 5px;
-  color: #b31236;
-  font-size: 7px;
-  font-weight: 950;
-  letter-spacing: 0.035em;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.live-score-badge i {
-  width: 5px;
-  height: 5px;
-  border-radius: 999px;
-  background: #e81946;
-  box-shadow: 0 0 0 3px rgba(232, 25, 70, 0.12);
-}
-
-.live-score-badge strong {
-  color: #8e0e2b;
-  font-family: var(--display);
-  font-size: 9px;
-}
-
-.live-team-cell > strong {
+.live-team-cell strong {
   overflow: hidden;
   color: #17243a;
   font-size: 12px;

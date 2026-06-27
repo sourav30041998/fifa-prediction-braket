@@ -110,12 +110,8 @@ type GroupFixture = {
   homeScore: number | null;
   awayScore: number | null;
   completed: boolean;
-  live: boolean;
-  status: FixtureStatus;
-  resultStatus: number;
 };
 
-type FixtureStatus = "scheduled" | "live" | "completed";
 type ScorePrediction = { home: number; away: number };
 type ScorePredictions = Record<string, ScorePrediction>;
 
@@ -281,21 +277,6 @@ function loadManualSimulationMode() {
   }
 }
 
-const liveMatchWindowMs = 4 * 60 * 60 * 1000;
-
-function getFixtureLifecycle(match: FifaMatchResult, hasScore: boolean, now = Date.now()) {
-  const kickoffTime = new Date(match.StartTime).getTime();
-  const hasValidKickoff = Number.isFinite(kickoffTime);
-  const resultStatus = Number(match.Result ?? 0);
-  const isFinalResult = hasScore && resultStatus >= 4;
-  const hasKickedOff = hasValidKickoff && kickoffTime <= now;
-  const isInsideLiveWindow = hasKickedOff && now - kickoffTime <= liveMatchWindowMs;
-  const live = hasScore && !isFinalResult && isInsideLiveWindow;
-  const completed = hasScore && (isFinalResult || (hasKickedOff && !isInsideLiveWindow));
-  const status: FixtureStatus = completed ? "completed" : live ? "live" : "scheduled";
-
-  return { completed, live, status, resultStatus };
-}
 function parseFifaFixtures(rows: FifaStanding[]) {
   const teamCodeById = Object.fromEntries(
     rows.flatMap((row) => row.Team?.IdTeam && row.Team.IdCountry ? [[row.Team.IdTeam, row.Team.IdCountry]] : [])
@@ -311,7 +292,6 @@ function parseFifaFixtures(rows: FifaStanding[]) {
       const awayCode = teamCodeById[match.AwayTeamId];
       if (!homeCode || !awayCode || !groupId) return;
       const hasScore = match.HomeTeamScore !== null && match.AwayTeamScore !== null;
-      const lifecycle = getFixtureLifecycle(match, hasScore);
       fixtures.set(match.IdMatch, {
         id: match.IdMatch,
         groupId,
@@ -320,10 +300,7 @@ function parseFifaFixtures(rows: FifaStanding[]) {
         awayCode,
         homeScore: match.HomeTeamScore,
         awayScore: match.AwayTeamScore,
-        completed: lifecycle.completed,
-        live: lifecycle.live,
-        status: lifecycle.status,
-        resultStatus: lifecycle.resultStatus
+        completed: hasScore && (match.Result === 4 || new Date(match.StartTime).getTime() <= Date.now())
       });
     });
   });
@@ -336,8 +313,8 @@ function calculateProjectedStats(fixtures: GroupFixture[], predictions: ScorePre
 
   fixtures.forEach((fixture) => {
     const predicted = predictions[fixture.id];
-    const home = fixture.completed ? fixture.homeScore : fixture.live ? undefined : predicted?.home;
-    const away = fixture.completed ? fixture.awayScore : fixture.live ? undefined : predicted?.away;
+    const home = fixture.completed ? fixture.homeScore : predicted?.home;
+    const away = fixture.completed ? fixture.awayScore : predicted?.away;
     if (home === null || away === null || home === undefined || away === undefined) return;
 
     const homeStats = projected[fixture.homeCode];
@@ -736,17 +713,6 @@ function getFixtureOpponent(team: Team, fixture?: GroupFixture) {
   return findTeamByCode(opponentCode);
 }
 
-function hasFixtureScore(fixture: GroupFixture) {
-  return fixture.homeScore !== null && fixture.awayScore !== null;
-}
-
-function getLiveFixtureForTeam(team: Team, fixtures: GroupFixture[]) {
-  return fixtures.find((fixture) =>
-    fixture.live &&
-    hasFixtureScore(fixture) &&
-    (fixture.homeCode === team.code || fixture.awayCode === team.code)
-  );
-}
 function cloneStatsMap(stats: StatsMap) {
   return Object.fromEntries(
     allTeams.map((team) => [team.code, { ...(stats[team.code] ?? emptyStats) }])
@@ -1762,7 +1728,7 @@ function GroupPredictor({
             order={groupOrder[group.id]}
             bestThirdNames={bestThirdNames}
             stats={stats}
-            fixtures={fixtures.filter((fixture) => fixture.groupId === group.id)}
+            fixtureCount={fixtures.filter((fixture) => fixture.groupId === group.id).length}
             onMove={onMoveGroupTeam}
             onPredict={onPredictGroup}
             onPreviewOpponents={onPreviewOpponents}
@@ -1809,7 +1775,7 @@ function LiveGroupCard({
   order,
   bestThirdNames,
   stats,
-  fixtures,
+  fixtureCount,
   onMove,
   onPredict,
   onPreviewOpponents,
@@ -1819,7 +1785,7 @@ function LiveGroupCard({
   order: string[];
   bestThirdNames: Set<string>;
   stats: StatsMap;
-  fixtures: GroupFixture[];
+  fixtureCount: number;
   onMove: (groupId: string, fromIndex: number, toIndex: number) => void;
   onPredict: (groupId: string) => void;
   onPreviewOpponents: (groupId: string) => void;
@@ -1831,9 +1797,6 @@ function LiveGroupCard({
     if (dragIndex !== null) onMove(group.id, dragIndex, toIndex);
     setDragIndex(null);
   }
-
-  const fixtureCount = fixtures.length;
-
   return (
     <article className="group-card live-group-card">
       <header>
@@ -1850,11 +1813,10 @@ function LiveGroupCard({
           {order.map((teamName, index) => {
             const team = findTeam(teamName)!;
             const teamStats = stats[team.code] ?? emptyStats;
-            const liveFixture = getLiveFixtureForTeam(team, fixtures);
             const thirdQualified = index === 2 && bestThirdNames.has(teamName);
             return (
               <div
-                className={`live-team-row ${index < 2 ? "automatic" : ""} ${thirdQualified ? "third-qualified" : ""} ${liveFixture ? "live-match" : ""} ${dragIndex === index ? "dragging" : ""}`}
+                className={`live-team-row ${index < 2 ? "automatic" : ""} ${thirdQualified ? "third-qualified" : ""} ${dragIndex === index ? "dragging" : ""}`}
                 draggable
                 key={team.name}
                 onDragEnd={() => setDragIndex(null)}
@@ -1865,10 +1827,7 @@ function LiveGroupCard({
                 <span className="rank-number">{index + 1}</span>
                 <span className="live-team-cell">
                   <GripVertical className="drag-handle" size={16} />
-                  <span className="live-team-flag-score">
-                    <Flag team={team} />
-                    {liveFixture && <LiveScoreBadge team={team} fixture={liveFixture} />}
-                  </span>
+                  <Flag team={team} />
                   <strong>{team.name}</strong>
                 </span>
                 {statColumns.map((column) => (
@@ -1909,24 +1868,6 @@ function LiveGroupCard({
   );
 }
 
-function LiveScoreBadge({ team, fixture }: { team: Team; fixture: GroupFixture }) {
-  if (!hasFixtureScore(fixture)) return null;
-
-  const isHomeTeam = fixture.homeCode === team.code;
-  const ownScore = isHomeTeam ? fixture.homeScore : fixture.awayScore;
-  const opponentScore = isHomeTeam ? fixture.awayScore : fixture.homeScore;
-  const opponent = findTeamByCode(isHomeTeam ? fixture.awayCode : fixture.homeCode);
-  if (ownScore === null || opponentScore === null) return null;
-
-  return (
-    <span className="live-score-badge" title={`Live vs ${opponent?.name ?? "opponent"}`}>
-      <i />
-      <span>LIVE</span>
-      <strong>{ownScore}-{opponentScore}</strong>
-    </span>
-  );
-}
-
 function ThirdPlacePredictor({ order, stats, onMove }: { order: string[]; stats: StatsMap; onMove: (fromIndex: number, toIndex: number) => void }) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   function drop(event: DragEvent<HTMLDivElement>, toIndex: number) {
@@ -1934,7 +1875,6 @@ function ThirdPlacePredictor({ order, stats, onMove }: { order: string[]; stats:
     if (dragIndex !== null) onMove(dragIndex, toIndex);
     setDragIndex(null);
   }
-
   return (
     <section className="third-place-panel rank-third-panel">
       <header>
@@ -2223,24 +2163,23 @@ function GroupMatchesModal({
             const awayTeam = findTeamByCode(fixture.awayCode)!;
             const kickoff = new Date(fixture.kickoff);
             const isPast = kickoff.getTime() <= Date.now();
-            const isLive = Boolean(fixture.live && hasFixtureScore(fixture));
-            const canPredict = !fixture.completed && !isLive && !isPast;
+            const canPredict = !fixture.completed && !isPast;
             const predicted = draft[fixture.id] ?? { home: 0, away: 0 };
 
             return (
-              <article className={`group-fixture ${fixture.completed ? "completed" : isLive ? "live" : canPredict ? "predictable" : "awaiting"}`} key={fixture.id}>
+              <article className={`group-fixture ${fixture.completed ? "completed" : canPredict ? "predictable" : "awaiting"}`} key={fixture.id}>
                 <div className="fixture-meta">
                   <span>{kickoff.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}</span>
                   <strong>{kickoff.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</strong>
-                  <em>{fixture.completed ? "Full time" : isLive ? "Live now" : canPredict ? "Your prediction" : "Awaiting official result"}</em>
+                  <em>{fixture.completed ? "Full time" : canPredict ? "Your prediction" : "Awaiting official result"}</em>
                 </div>
                 <div className="fixture-team home-team">
                   <strong>{homeTeam.name}</strong>
                   <Flag team={homeTeam} />
                 </div>
                 <div className="fixture-scoreline">
-                  {fixture.completed || isLive ? (
-                    <><strong>{fixture.homeScore}</strong><span>–</span><strong>{fixture.awayScore}</strong>{isLive && <em className="fixture-live-pill">LIVE</em>}</>
+                  {fixture.completed ? (
+                    <><strong>{fixture.homeScore}</strong><span>–</span><strong>{fixture.awayScore}</strong></>
                   ) : canPredict ? (
                     <>
                       <input aria-label={`${homeTeam.name} predicted goals`} inputMode="numeric" max="20" min="0" onChange={(event) => updateScore(fixture.id, "home", Number(event.target.value))} type="number" value={predicted.home} />
