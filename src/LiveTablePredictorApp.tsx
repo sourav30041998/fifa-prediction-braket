@@ -82,11 +82,29 @@ type AutoPickCache = {
 type View = "groups" | "bracket";
 type FeedState = "loading" | "live" | "cached" | "error";
 
+type FifaTeamSide = {
+  Score?: number | null;
+  IdTeam?: string;
+  IdCountry?: string;
+  Abbreviation?: string;
+  TeamName?: Array<{ Description?: string }>;
+};
+
 type FifaMatchResult = {
   IdMatch: string;
-  StartTime: string;
-  Result: number;
-  IdGroup: string;
+  StartTime?: string;
+  Date?: string;
+  LocalDate?: string;
+  Result?: number;
+  ResultType?: number | null;
+  MatchStatus?: number | string | null;
+  OfficialityStatus?: number | null;
+  IdCompetition?: string;
+  IdSeason?: string;
+  IdStage?: string;
+  IdGroup?: string | null;
+  Home?: FifaTeamSide | null;
+  Away?: FifaTeamSide | null;
   HomeTeamScore: number | null;
   AwayTeamScore: number | null;
   HomeTeamId: string;
@@ -95,10 +113,15 @@ type FifaMatchResult = {
   MatchNo?: number | string;
   MatchCode?: string;
   Description?: string;
+  PlaceHolderA?: string;
+  PlaceHolderB?: string;
+  StageName?: Array<{ Description?: string }>;
+  GroupName?: Array<{ Description?: string }>;
   HomeTeamPenaltyScore?: number | null;
   AwayTeamPenaltyScore?: number | null;
   HomeTeamPenalty?: number | null;
   AwayTeamPenalty?: number | null;
+  Winner?: string | null;
   WinnerTeamId?: string;
   WinningTeamId?: string;
 };
@@ -151,6 +174,7 @@ type KnockoutFixture = {
   awayScore: number | null;
   homePenaltyScore: number | null;
   awayPenaltyScore: number | null;
+  labels?: [string, string];
   completed: boolean;
   live: boolean;
   status: FixtureStatus;
@@ -168,6 +192,8 @@ const fifaRegulationsUrl =
   "https://digitalhub.fifa.com/m/636f5c9c6f29771f/original/FWC2026_regulations_EN.pdf";
 const fifaStandingsApi =
   "https://api.fifa.com/api/v3/calendar/17/285023/289273/standing?language=en&count=500";
+const fifaMatchesApi =
+  "https://api.fifa.com/api/v3/calendar/matches?idCompetition=17&idSeason=285023&language=en&count=500";
 const fifaRankingsApi =
   "https://api.fifa.com/api/v3/fifarankings/rankings/live?gender=1&sportType=0&language=en";
 const flagUrl = (code: string) =>
@@ -342,14 +368,30 @@ function loadManualSimulationMode() {
 
 const liveMatchWindowMs = 4 * 60 * 60 * 1000;
 
+function getMatchKickoff(match: FifaMatchResult) {
+  return match.StartTime ?? match.Date ?? match.LocalDate ?? "";
+}
+
+function getMatchScore(match: FifaMatchResult, side: "Home" | "Away") {
+  const score = side === "Home" ? match.HomeTeamScore : match.AwayTeamScore;
+  return typeof score === "number" ? score : match[side]?.Score ?? null;
+}
+
+function getCalendarTeamCode(team?: FifaTeamSide | null) {
+  return normalizeTeamCode(team?.IdCountry ?? team?.Abbreviation);
+}
+
 function getFixtureLifecycle(match: FifaMatchResult, hasScore: boolean, now = Date.now()) {
-  const kickoffTime = new Date(match.StartTime).getTime();
+  const kickoffTime = new Date(getMatchKickoff(match)).getTime();
   const hasValidKickoff = Number.isFinite(kickoffTime);
-  const resultStatus = Number(match.Result ?? 0);
-  const isFinalResult = resultStatus >= 4;
+  const resultStatus = Number(match.Result ?? match.ResultType ?? 0);
+  const matchStatus = Number(match.MatchStatus ?? 0);
+  const isOfficialResult = Number(match.OfficialityStatus ?? 0) > 0;
+  const hasWinner = Boolean(match.Winner ?? match.WinnerTeamId ?? match.WinningTeamId);
+  const isFinalResult = resultStatus >= 4 || match.ResultType === 1 || isOfficialResult || hasWinner;
   const hasKickedOff = hasValidKickoff && kickoffTime <= now;
   const isInsideLiveWindow = hasKickedOff && now - kickoffTime <= liveMatchWindowMs;
-  const statusLooksLive = resultStatus > 0 && resultStatus < 4;
+  const statusLooksLive = (resultStatus > 0 && resultStatus < 4) || matchStatus > 1;
   const live = !isFinalResult && (statusLooksLive || isInsideLiveWindow);
   const completed = hasScore && (isFinalResult || (hasKickedOff && !live));
   const status: FixtureStatus = completed ? "completed" : live ? "live" : "scheduled";
@@ -396,8 +438,9 @@ function inferKnockoutMatchNumber(match: FifaMatchResult) {
 
 function getResultTeamCode(match: FifaMatchResult, side: "Home" | "Away", teamCodeById: Record<string, string>) {
   const raw = match as FifaMatchResult & Record<string, unknown>;
+  const team = match[side];
   const id = side === "Home" ? match.HomeTeamId : match.AwayTeamId;
-  const idFromFlexibleField = readStringField(raw, [`${side}TeamId`, `Id${side}Team`, `${side}IdTeam`]);
+  const idFromFlexibleField = readStringField(raw, [`${side}TeamId`, `Id${side}Team`, `${side}IdTeam`]) ?? team?.IdTeam;
   const fromId = teamCodeById[id] ?? (idFromFlexibleField ? teamCodeById[idFromFlexibleField] : undefined);
   const direct = readStringField(raw, [
     `${side}TeamCountryCode`,
@@ -407,7 +450,7 @@ function getResultTeamCode(match: FifaMatchResult, side: "Home" | "Away", teamCo
     `${side}TeamIdCountry`,
     `IdCountry${side}`
   ]);
-  return normalizeTeamCode(fromId ?? direct);
+  return normalizeTeamCode(fromId ?? direct) ?? getCalendarTeamCode(team);
 }
 
 function getPenaltyScore(match: FifaMatchResult, side: "Home" | "Away") {
@@ -429,13 +472,15 @@ function getCompletedWinnerCode(
   awayPenaltyScore: number | null
 ) {
   const raw = match as FifaMatchResult & Record<string, unknown>;
-  const winnerId = match.WinnerTeamId ?? match.WinningTeamId ?? readStringField(raw, ["WinnerIdTeam", "WinningTeamId", "WinnerTeamId"]);
+  const winnerId = match.Winner ?? match.WinnerTeamId ?? match.WinningTeamId ?? readStringField(raw, ["Winner", "WinnerIdTeam", "WinningTeamId", "WinnerTeamId"]);
   const winnerCode = normalizeTeamCode(winnerId ? teamCodeById[winnerId] ?? winnerId : undefined);
   if (winnerCode) return winnerCode;
 
-  if (match.HomeTeamScore !== null && match.AwayTeamScore !== null) {
-    if (match.HomeTeamScore > match.AwayTeamScore) return homeCode;
-    if (match.AwayTeamScore > match.HomeTeamScore) return awayCode;
+  const homeScore = getMatchScore(match, "Home");
+  const awayScore = getMatchScore(match, "Away");
+  if (homeScore !== null && awayScore !== null) {
+    if (homeScore > awayScore) return homeCode;
+    if (awayScore > homeScore) return awayCode;
   }
 
   if (homePenaltyScore !== null && awayPenaltyScore !== null) {
@@ -465,7 +510,9 @@ function parseFifaKnockoutFixtures(rows: FifaStanding[]) {
       const awayCode = getResultTeamCode(match, "Away", teamCodeById);
       if (!homeCode || !awayCode) return;
 
-      const hasScore = match.HomeTeamScore !== null && match.AwayTeamScore !== null;
+      const homeScore = getMatchScore(match, "Home");
+      const awayScore = getMatchScore(match, "Away");
+      const hasScore = homeScore !== null && awayScore !== null;
       const lifecycle = getFixtureLifecycle(match, hasScore);
       const homePenaltyScore = getPenaltyScore(match, "Home");
       const awayPenaltyScore = getPenaltyScore(match, "Away");
@@ -476,19 +523,69 @@ function parseFifaKnockoutFixtures(rows: FifaStanding[]) {
       fixtures.set(match.IdMatch, {
         id: match.IdMatch,
         number: matchNumber,
-        kickoff: match.StartTime,
+        kickoff: getMatchKickoff(match),
         homeCode,
         awayCode,
-        homeScore: match.HomeTeamScore,
-        awayScore: match.AwayTeamScore,
+        homeScore,
+        awayScore,
         homePenaltyScore,
         awayPenaltyScore,
+        labels: match.PlaceHolderA && match.PlaceHolderB ? [match.PlaceHolderA, match.PlaceHolderB] : undefined,
         completed: lifecycle.completed,
         live: lifecycle.live,
         status: lifecycle.status,
         resultStatus: lifecycle.resultStatus,
         winnerCode
       });
+    });
+  });
+
+  return [...fixtures.values()].sort((a, b) => a.kickoff.localeCompare(b.kickoff));
+}
+
+function parseFifaCalendarKnockoutFixtures(matches: FifaMatchResult[]) {
+  const teamCodeById = Object.fromEntries(
+    matches.flatMap((match) => [
+      match.Home?.IdTeam && getCalendarTeamCode(match.Home) ? [[match.Home.IdTeam, getCalendarTeamCode(match.Home)!]] : [],
+      match.Away?.IdTeam && getCalendarTeamCode(match.Away) ? [[match.Away.IdTeam, getCalendarTeamCode(match.Away)!]] : []
+    ].flat())
+  ) as Record<string, string>;
+  const fixtures = new Map<string, KnockoutFixture>();
+
+  matches.forEach((match) => {
+    const matchNumber = inferKnockoutMatchNumber(match);
+    if (!matchNumber || !officialPickOrder.includes(matchNumber)) return;
+
+    const homeCode = getResultTeamCode(match, "Home", teamCodeById);
+    const awayCode = getResultTeamCode(match, "Away", teamCodeById);
+    if (!homeCode || !awayCode) return;
+
+    const homeScore = getMatchScore(match, "Home");
+    const awayScore = getMatchScore(match, "Away");
+    const hasScore = homeScore !== null && awayScore !== null;
+    const lifecycle = getFixtureLifecycle(match, hasScore);
+    const homePenaltyScore = getPenaltyScore(match, "Home");
+    const awayPenaltyScore = getPenaltyScore(match, "Away");
+    const winnerCode = lifecycle.completed
+      ? getCompletedWinnerCode(match, teamCodeById, homeCode, awayCode, homePenaltyScore, awayPenaltyScore)
+      : undefined;
+
+    fixtures.set(match.IdMatch, {
+      id: match.IdMatch,
+      number: matchNumber,
+      kickoff: getMatchKickoff(match),
+      homeCode,
+      awayCode,
+      homeScore,
+      awayScore,
+      homePenaltyScore,
+      awayPenaltyScore,
+      labels: match.PlaceHolderA && match.PlaceHolderB ? [match.PlaceHolderA, match.PlaceHolderB] : undefined,
+      completed: lifecycle.completed,
+      live: lifecycle.live,
+      status: lifecycle.status,
+      resultStatus: lifecycle.resultStatus,
+      winnerCode
     });
   });
 
@@ -509,16 +606,18 @@ function parseFifaFixtures(rows: FifaStanding[]) {
       const homeCode = teamCodeById[match.HomeTeamId];
       const awayCode = teamCodeById[match.AwayTeamId];
       if (!homeCode || !awayCode || !groupId) return;
-      const hasScore = match.HomeTeamScore !== null && match.AwayTeamScore !== null;
+      const homeScore = getMatchScore(match, "Home");
+      const awayScore = getMatchScore(match, "Away");
+      const hasScore = homeScore !== null && awayScore !== null;
       const lifecycle = getFixtureLifecycle(match, hasScore);
       fixtures.set(match.IdMatch, {
         id: match.IdMatch,
         groupId,
-        kickoff: match.StartTime,
+        kickoff: getMatchKickoff(match),
         homeCode,
         awayCode,
-        homeScore: match.HomeTeamScore,
-        awayScore: match.AwayTeamScore,
+        homeScore,
+        awayScore,
         completed: lifecycle.completed,
         live: lifecycle.live,
         status: lifecycle.status,
@@ -777,6 +876,28 @@ function buildRoundOf32(groupOrder: GroupOrder, thirdOrder: string[]) {
     [87, match(87, position("K", 0), thirdOpponent("K"), "1K", `3${annexC.K}`)],
     [88, match(88, position("D", 1), position("G", 1), "2D", "2G")]
   ]);
+}
+
+function buildRoundOf32FromKnockoutFixtures(fixtures: KnockoutFixture[], fallbackRoundOf32: Map<number, OfficialMatch>) {
+  const next = new Map(fallbackRoundOf32);
+
+  fixtures.forEach((fixture) => {
+    if (!fixture.number || fixture.number < 73 || fixture.number > 88) return;
+    const home = findTeamByCode(fixture.homeCode);
+    const away = findTeamByCode(fixture.awayCode);
+    if (!home || !away) return;
+    const fallback = fallbackRoundOf32.get(fixture.number);
+    next.set(fixture.number, {
+      number: fixture.number,
+      teams: [home, away],
+      labels: [
+        fixture.labels?.[0] ?? fallback?.labels[0] ?? "TBD",
+        fixture.labels?.[1] ?? fallback?.labels[1] ?? "TBD"
+      ]
+    });
+  });
+
+  return next;
 }
 
 function resolveOfficialMatch(
@@ -1627,7 +1748,20 @@ function LiveTablePredictorApp() {
       const results = payload.Results ?? [];
       const nextStats = parseFifaStandings(results);
       const nextFixtures = parseFifaFixtures(results);
-      const nextKnockoutFixtures = parseFifaKnockoutFixtures(results);
+      let nextKnockoutFixtures = parseFifaKnockoutFixtures(results);
+      try {
+        const matchesResponse = await fetch(fifaMatchesApi, {
+          headers: { Accept: "application/json" },
+          signal
+        });
+        if (matchesResponse.ok) {
+          const matchesPayload = (await matchesResponse.json()) as { Results?: FifaMatchResult[] };
+          const calendarKnockoutFixtures = parseFifaCalendarKnockoutFixtures(matchesPayload.Results ?? []);
+          if (calendarKnockoutFixtures.length > 0) nextKnockoutFixtures = calendarKnockoutFixtures;
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") throw error;
+      }
       if (Object.keys(nextStats).length < 48 || nextFixtures.length < 72) {
         throw new Error("Incomplete FIFA standings response");
       }
@@ -1795,9 +1929,13 @@ function LiveTablePredictorApp() {
     () => buildRoundOf32(groupOrder, thirdOrder),
     [groupOrder, thirdOrder]
   );
-  const officialPicks = useMemo(
-    () => buildOfficialKnockoutPicks(knockoutFixtures, roundOf32),
+  const bracketRoundOf32 = useMemo(
+    () => buildRoundOf32FromKnockoutFixtures(knockoutFixtures, roundOf32),
     [knockoutFixtures, roundOf32]
+  );
+  const officialPicks = useMemo(
+    () => buildOfficialKnockoutPicks(knockoutFixtures, bracketRoundOf32),
+    [knockoutFixtures, bracketRoundOf32]
   );
   const predictionAccuracy = useMemo(
     () => buildPredictionAccuracy(bracketPicks, officialPicks),
@@ -1812,10 +1950,10 @@ function LiveTablePredictorApp() {
 
   useEffect(() => {
     setBracketPicks((current) => {
-      const sanitized = sanitizeOfficialPicks(current, roundOf32);
+      const sanitized = sanitizeOfficialPicks(current, bracketRoundOf32);
       return JSON.stringify(sanitized) === JSON.stringify(current) ? current : sanitized;
     });
-  }, [roundOf32]);
+  }, [bracketRoundOf32]);
 
   function switchView(nextView: View) {
     setView(nextView);
@@ -1912,7 +2050,7 @@ function LiveTablePredictorApp() {
 
     const manualBaseline = autoPickSnapshot ?? bracketPicks;
     setBracketPicks(
-      sanitizeOfficialPicks({ ...manualBaseline, [pickKey]: teamName }, roundOf32)
+      sanitizeOfficialPicks({ ...manualBaseline, [pickKey]: teamName }, bracketRoundOf32)
     );
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
@@ -1921,7 +2059,7 @@ function LiveTablePredictorApp() {
   function resetMatchToOfficial(matchNumber: number) {
     const officialWinner = officialPicks[`m${matchNumber}`];
     if (!officialWinner) return;
-    setBracketPicks((current) => sanitizeOfficialPicks({ ...current, [`m${matchNumber}`]: officialWinner }, roundOf32));
+    setBracketPicks((current) => sanitizeOfficialPicks({ ...current, [`m${matchNumber}`]: officialWinner }, bracketRoundOf32));
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
   }
@@ -1936,14 +2074,14 @@ function LiveTablePredictorApp() {
         if (officialWinner) next[`m${matchNumber}`] = officialWinner;
         else delete next[`m${matchNumber}`];
       });
-      return sanitizeOfficialPicks(next, roundOf32);
+      return sanitizeOfficialPicks(next, bracketRoundOf32);
     });
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
   }
 
   function resetBracketToOfficial() {
-    setBracketPicks(sanitizeOfficialPicks(officialPicks, roundOf32));
+    setBracketPicks(sanitizeOfficialPicks(officialPicks, bracketRoundOf32));
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
   }
@@ -1955,7 +2093,7 @@ function LiveTablePredictorApp() {
       return;
     }
 
-    const baseline = sanitizeOfficialPicks(bracketPicks, roundOf32);
+    const baseline = sanitizeOfficialPicks(bracketPicks, bracketRoundOf32);
     if (autoPickCache && sameBracketPicks(autoPickCache.baseline, baseline)) {
       setAutoPickSnapshot(baseline);
       setBracketPicks(autoPickCache.generated);
@@ -2700,6 +2838,19 @@ function CompactRound({
   );
 }
 
+function getFixtureScoreForTeam(fixture: KnockoutFixture | undefined, team: Team) {
+  if (!fixture) return null;
+  const isHome = fixture.homeCode === team.code;
+  const isAway = fixture.awayCode === team.code;
+  if (!isHome && !isAway) return null;
+
+  const score = isHome ? fixture.homeScore : fixture.awayScore;
+  if (score === null) return null;
+
+  const penaltyScore = isHome ? fixture.homePenaltyScore : fixture.awayPenaltyScore;
+  return penaltyScore === null ? String(score) : `${score} (${penaltyScore})`;
+}
+
 function OfficialMatchCard({
   match,
   selected,
@@ -2739,6 +2890,7 @@ function OfficialMatchCard({
         const isOfficialWinner = officialSelected === team?.name;
         const isUserPick = predictionSelected === team?.name;
         const isOverridden = mode === "prediction" && isUserPick && Boolean(officialSelected) && predictionSelected !== officialSelected;
+        const teamScore = team ? getFixtureScoreForTeam(fixture, team) : null;
         const buttonClass = [
           isSelected ? "winner" : selected ? "loser" : "",
           isOfficialWinner ? "official-winner" : "",
@@ -2772,6 +2924,7 @@ function OfficialMatchCard({
                 <span className="official-team-name">{team.name}</span>
               </>
             )}
+            {teamScore !== null && <span className="match-team-score">{teamScore}</span>}
             <span className="winner-check marker-stack">
               {isOfficialWinner && <span className="official-winner-marker" title="Official winner"><Check size={9} /></span>}
               {mode === "prediction" && isUserPick && <span className={`user-pick-marker ${isOverridden ? "overridden" : ""}`} title={isOverridden ? "Overridden user pick" : "User pick"}>{isOverridden ? "!" : "P"}</span>}

@@ -781,3 +781,52 @@
     grid-template-columns: 1fr;
   }
 }
+.official-match-card button {
+  grid-template-columns: 19px 23px minmax(0, 1fr) minmax(16px, auto) 22px;
+}
+
+.official-match-card button.round32-team-row {
+  grid-template-columns: 23px minmax(0, 1fr) minmax(16px, auto) 22px;
+}
+
+.match-team-score {
+  justify-self: end;
+  color: #111d33;
+  font-family: var(--display);
+  font-size: 8px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.official-match-card button.loser .match-team-score {
+  color: #7c8799;
+}
+
+.official-match-card button.official-winner .match-team-score,
+.official-match-card button.winner .match-team-score {
+  color: #075e46;
+}
+
+@media (max-width: 1180px) {
+  .official-match-card button {
+    grid-template-columns: 17px 20px minmax(0, 1fr) minmax(14px, auto) 20px;
+  }
+
+  .official-match-card button.round32-team-row {
+    grid-template-columns: 20px minmax(0, 1fr) minmax(14px, auto) 20px;
+  }
+}
+
+@media (max-width: 900px) {
+  .official-match-card button {
+    grid-template-columns: 25px 29px minmax(0, 1fr) minmax(20px, auto) 28px;
+  }
+
+  .official-match-card button.round32-team-row {
+    grid-template-columns: 29px minmax(0, 1fr) minmax(20px, auto) 28px;
+  }
+
+  .match-team-score {
+    font-size: 10px;
+  }
+}
