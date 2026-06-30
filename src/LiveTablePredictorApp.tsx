@@ -1,4 +1,4 @@
-import {
+﻿import {
   useCallback,
   useEffect,
   useMemo,
@@ -210,8 +210,8 @@ const groupData: Array<[string, Array<[string, string]>]> = [
   ["A", [["Mexico", "MEX"], ["South Africa", "RSA"], ["Korea Republic", "KOR"], ["Czechia", "CZE"]]],
   ["B", [["Switzerland", "SUI"], ["Canada", "CAN"], ["Bosnia and Herzegovina", "BIH"], ["Qatar", "QAT"]]],
   ["C", [["Brazil", "BRA"], ["Morocco", "MAR"], ["Scotland", "SCO"], ["Haiti", "HAI"]]],
-  ["D", [["USA", "USA"], ["Australia", "AUS"], ["Paraguay", "PAR"], ["Türkiye", "TUR"]]],
-  ["E", [["Germany", "GER"], ["Côte d'Ivoire", "CIV"], ["Ecuador", "ECU"], ["Curaçao", "CUW"]]],
+  ["D", [["USA", "USA"], ["Australia", "AUS"], ["Paraguay", "PAR"], ["TÃ¼rkiye", "TUR"]]],
+  ["E", [["Germany", "GER"], ["CÃ´te d'Ivoire", "CIV"], ["Ecuador", "ECU"], ["CuraÃ§ao", "CUW"]]],
   ["F", [["Netherlands", "NED"], ["Japan", "JPN"], ["Sweden", "SWE"], ["Tunisia", "TUN"]]],
   ["G", [["Egypt", "EGY"], ["IR Iran", "IRN"], ["Belgium", "BEL"], ["New Zealand", "NZL"]]],
   ["H", [["Spain", "ESP"], ["Uruguay", "URU"], ["Cabo Verde", "CPV"], ["Saudi Arabia", "KSA"]]],
@@ -914,6 +914,13 @@ const rightBracketMatches = {
   semiFinals: [102]
 };
 
+const horizontalBracketMatches = {
+  round32: [...leftBracketMatches.round32, ...rightBracketMatches.round32],
+  round16: [...leftBracketMatches.round16, ...rightBracketMatches.round16],
+  quarterFinals: [...leftBracketMatches.quarterFinals, ...rightBracketMatches.quarterFinals],
+  semiFinals: [...leftBracketMatches.semiFinals, ...rightBracketMatches.semiFinals]
+};
+
 function buildRoundOf32(groupOrder: GroupOrder, thirdOrder: string[]) {
   const position = (groupId: string, index: number) => findTeam(groupOrder[groupId][index]);
   const thirdByGroup = Object.fromEntries(
@@ -1159,7 +1166,7 @@ function getRouteMetaLabel(route: QualificationRoute) {
       ? `${formatOrdinal(route.position)} place locked`
       : `${route.scenarioCount} table combination${route.scenarioCount === 1 ? "" : "s"}`;
 
-  return `${certainty} · Pts ${formatRange(route.pointsRange)} · GD ${formatRange(route.gdRange)} · ${route.status === "third" ? "Best-third route" : "Automatic route"}`;
+  return `${certainty} Â· Pts ${formatRange(route.pointsRange)} Â· GD ${formatRange(route.gdRange)} Â· ${route.status === "third" ? "Best-third route" : "Automatic route"}`;
 }
 
 function getPreviewRouteNote(preview: RoundOf32TeamScenarioPreview, manualSimulationMode: boolean) {
@@ -2548,7 +2555,7 @@ function GroupPredictor({
           <button className="secondary-button accent" onClick={onSyncLiveTable} type="button"><RefreshCw size={17} /> Sync live table</button>
         )}
         <div>
-          <span>{manualSimulationMode ? "Manual simulation locked · Round of 32 follows your table" : "Your ranking is saved automatically"}</span>
+          <span>{manualSimulationMode ? "Manual simulation locked Â· Round of 32 follows your table" : "Your ranking is saved automatically"}</span>
           <button className="primary-button" onClick={onContinue} type="button">Build Round of 32 <ArrowRight size={18} /></button>
         </div>
       </div>
@@ -2654,7 +2661,7 @@ function LiveGroupCard({
           })}
         </div>
       </div>
-      <footer><span>Q automatic · 3Q best third</span><span>Live + predicted stats</span></footer>
+      <footer><span>Q automatic Â· 3Q best third</span><span>Live + predicted stats</span></footer>
       <button
         className="group-matches-button"
         disabled={fixtureCount === 0}
@@ -2662,7 +2669,7 @@ function LiveGroupCard({
         type="button"
       >
         <span>Predict Group {group.id} matches</span>
-        <strong>{fixtureCount || "—"}/6</strong>
+        <strong>{fixtureCount || "â€”"}/6</strong>
       </button>
       <button
         className="group-round32-preview-button"
@@ -2711,7 +2718,7 @@ function ThirdPlacePredictor({ order, stats, onMove }: { order: string[]; stats:
         <div>
           <span className="eyebrow">POSITION 3 TABLE</span>
           <h3>Rank the third-place teams</h3>
-          <p>Drag the teams into your predicted cross-group order. Positions 1–8 qualify.</p>
+          <p>Drag the teams into your predicted cross-group order. Positions 1â€“8 qualify.</p>
         </div>
         <div className="third-summary"><strong>8</strong><span>of 12 advance</span></div>
       </header>
@@ -2837,7 +2844,7 @@ function KnockoutStage({
     <section className="content-section official-knockout-section dual-bracket-section">
       <header className="section-heading bracket-heading">
         <div>
-          <span className="eyebrow">DUAL BRACKET MODE � M73-M104</span>
+          <span className="eyebrow">DUAL BRACKET MODE · M73-M104</span>
           <h2>{isPredictionMode ? "My prediction bracket" : "Official bracket"}</h2>
           <p>
             {isPredictionMode
@@ -2954,14 +2961,17 @@ function KnockoutStage({
         </article>
       )}
 
-      <div className={`official-bracket-shell dual-bracket-shell ${mode === "official" ? "official-mode" : "prediction-mode"}`} aria-label="FIFA World Cup 2026 knockout bracket">
-        <CompactRound title="Round of 32" numbers={leftBracketMatches.round32} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="left" />
-        <CompactRound title="Round of 16" numbers={leftBracketMatches.round16} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="left" />
-        <CompactRound title="Quarter-final" numbers={leftBracketMatches.quarterFinals} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="left" />
-        <CompactRound title="Semi-final" numbers={leftBracketMatches.semiFinals} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="left" />
+      <div className={`official-bracket-shell horizontal-bracket-shell dual-bracket-shell ${mode === "official" ? "official-mode" : "prediction-mode"}`} aria-label="FIFA World Cup 2026 knockout bracket">
+        <CompactRound title="R32" subtitle="Round of 32" numbers={horizontalBracketMatches.round32} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} />
+        <CompactRound title="R16" subtitle="Round of 16" numbers={horizontalBracketMatches.round16} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} />
+        <CompactRound title="QF" subtitle="Quarter-final" numbers={horizontalBracketMatches.quarterFinals} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} />
+        <CompactRound title="SF" subtitle="Semi-final" numbers={horizontalBracketMatches.semiFinals} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} />
 
-        <section className="bracket-centre-column">
-          <header>Finals</header>
+        <section className="bracket-centre-column horizontal-final-column">
+          <header>
+            <strong>Final</strong>
+            <span>Champion path</span>
+          </header>
           <div className="centre-final">
             <OfficialMatchCard
               match={resolveOfficialMatch(104, roundOf32, picks)}
@@ -2975,25 +2985,7 @@ function KnockoutStage({
               featured
             />
           </div>
-          <div className="centre-third-place">
-            <span>Play-off for third place</span>
-            <OfficialMatchCard
-              match={resolveOfficialMatch(103, roundOf32, picks)}
-              selected={picks.m103}
-              predictionSelected={predictionPicks.m103}
-              officialSelected={officialPicks.m103}
-              fixture={getKnockoutFixtureForMatch(103, knockoutFixtures, roundOf32, officialPicks)}
-              mode={mode}
-              onPick={onPick}
-              onResetToOfficial={onResetMatchToOfficial}
-            />
-          </div>
         </section>
-
-        <CompactRound title="Semi-final" numbers={rightBracketMatches.semiFinals} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="right" />
-        <CompactRound title="Quarter-final" numbers={rightBracketMatches.quarterFinals} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="right" />
-        <CompactRound title="Round of 16" numbers={rightBracketMatches.round16} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="right" />
-        <CompactRound title="Round of 32" numbers={rightBracketMatches.round32} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="right" />
       </div>
 
       <p className="official-bracket-note">
@@ -3007,6 +2999,7 @@ function KnockoutStage({
 
 function CompactRound({
   title,
+  subtitle,
   numbers,
   roundOf32,
   picks,
@@ -3015,10 +3008,10 @@ function CompactRound({
   knockoutFixtures,
   mode,
   onPick,
-  onResetMatchToOfficial,
-  side
+  onResetMatchToOfficial
 }: {
   title: string;
+  subtitle?: string;
   numbers: number[];
   roundOf32: Map<number, OfficialMatch>;
   picks: BracketPicks;
@@ -3028,12 +3021,26 @@ function CompactRound({
   mode: BracketMode;
   onPick: (matchNumber: number, teamName: string) => void;
   onResetMatchToOfficial: (matchNumber: number) => void;
-  side: "left" | "right";
 }) {
   return (
-    <section className={`compact-round compact-round-${side} compact-round-${numbers.length}`}>
-      <header>{title}</header>
+    <section className={`compact-round compact-round-flow compact-round-${numbers.length}`}>
+      <header>
+        <strong>{title}</strong>
+        {subtitle && <span>{subtitle}</span>}
+      </header>
       <div className="compact-round-matches">
+        {numbers.length > 1 && (
+          <div className={`round-connectors round-connectors-${numbers.length}`} aria-hidden="true">
+            {Array.from({ length: numbers.length / 2 }, (_, index) => (
+              <span className="round-connector" key={index}>
+                <span className="connector-top" />
+                <span className="connector-bottom" />
+                <span className="connector-vertical" />
+                <span className="connector-middle" />
+              </span>
+            ))}
+          </div>
+        )}
         {numbers.map((matchNumber) => (
           <OfficialMatchCard
             key={matchNumber}
@@ -3087,6 +3094,7 @@ function OfficialMatchCard({
   featured?: boolean;
 }) {
   const isRoundOf32 = match.number >= 73 && match.number <= 88;
+  const roundLabel = getKnockoutRoundLabel(match.number);
   const statusLabel = getFixtureStatusLabel(fixture);
   const statusClass = fixture?.status ?? "scheduled";
   const readOnly = mode === "official";
@@ -3097,7 +3105,8 @@ function OfficialMatchCard({
     <article className={`official-match-card ${selected ? "decided" : ""} ${featured ? "featured" : ""} ${readOnly ? "read-only" : ""}`}>
       <div className="official-match-number">
         <span className="match-header-left">
-          <span>M{match.number}</span>
+          <strong>M{match.number}</strong>
+          <em>{roundLabel}</em>
           {mode === "prediction" && officialWinner && (
             <span className="match-inline-meta">
               <span className="official-winner-text">Official: {officialWinner.name}</span>
@@ -3112,6 +3121,7 @@ function OfficialMatchCard({
         <span className={`match-status-pill ${statusClass}`}>{statusLabel}</span>
       </div>
       {match.teams.map((team, index) => {
+        const sourceLabel = isRoundOf32 ? formatRoundOf32Slot(match.labels[index]) : match.labels[index];
         const isSelected = selected === team?.name;
         const isOfficialWinner = officialSelected === team?.name;
         const isUserPick = predictionSelected === team?.name;
@@ -3128,28 +3138,20 @@ function OfficialMatchCard({
 
         return team ? (
           <button
+            aria-label={`${team.name}, ${sourceLabel}`}
             aria-pressed={isSelected}
             className={buttonClass}
             disabled={readOnly}
             key={`${match.number}-${team.name}`}
             onClick={() => onPick(match.number, team.name)}
+            title={`${team.name} · ${sourceLabel}`}
             type="button"
           >
-            {isRoundOf32 ? (
-              <>
-                <Flag team={team} />
-                <span className="official-team-details">
-                  <span className="official-team-name">{team.name}</span>
-                  <span className="round32-source-label">{formatRoundOf32Slot(match.labels[index])}</span>
-                </span>
-              </>
-            ) : (
-              <>
-                <span className="official-slot-label">{match.labels[index]}</span>
-                <Flag team={team} />
-                <span className="official-team-name">{team.name}</span>
-              </>
-            )}
+            <span className="official-team-identity">
+              <Flag team={team} />
+              <span className="official-team-code">{team.code}</span>
+            </span>
+            <span className="round32-source-label">{sourceLabel}</span>
             {teamScore !== null && <span className="match-team-score">{teamScore}</span>}
             <span className="winner-check marker-stack">
               {isOfficialWinner && <span className="official-winner-marker" title="Official winner"><Check size={9} /></span>}
@@ -3158,14 +3160,22 @@ function OfficialMatchCard({
           </button>
         ) : (
           <div className={`official-team-placeholder ${isRoundOf32 ? "round32-placeholder" : ""}`} key={`${match.number}-${index}`}>
-            <span>{isRoundOf32 ? formatRoundOf32Slot(match.labels[index]) : match.labels[index]}</span>
-            <em>Team not confirmed</em>
+            <span>{sourceLabel}</span>
+            <em>Awaiting winner</em>
           </div>
         );
       })}
-
     </article>
   );
+}
+
+function getKnockoutRoundLabel(matchNumber: number) {
+  if (matchNumber >= 73 && matchNumber <= 88) return "Round of 32";
+  if (matchNumber >= 89 && matchNumber <= 96) return "Round of 16";
+  if (matchNumber >= 97 && matchNumber <= 100) return "Quarter-final";
+  if (matchNumber >= 101 && matchNumber <= 102) return "Semi-final";
+  if (matchNumber === 103) return "Third-place";
+  return "Final";
 }
 
 function formatRoundOf32Slot(label: string) {
@@ -3226,7 +3236,7 @@ function GroupMatchesModal({
       >
         <header className="group-match-modal-header">
           <div>
-            <span className="eyebrow">GROUP {group.id} · ALL MATCHES</span>
+            <span className="eyebrow">GROUP {group.id} Â· ALL MATCHES</span>
             <h2 id="match-prediction-title">Predict the scorelines</h2>
             <p>Completed FIFA results are locked. Enter scores for upcoming matches to project the table.</p>
           </div>
@@ -3257,11 +3267,11 @@ function GroupMatchesModal({
                 </div>
                 <div className="fixture-scoreline">
                   {fixture.completed || isLive ? (
-                    <><strong>{liveScore?.[0] ?? fixture.homeScore}</strong><span>–</span><strong>{liveScore?.[1] ?? fixture.awayScore}</strong>{isLive && <em className="fixture-live-pill">LIVE</em>}</>
+                    <><strong>{liveScore?.[0] ?? fixture.homeScore}</strong><span>â€“</span><strong>{liveScore?.[1] ?? fixture.awayScore}</strong>{isLive && <em className="fixture-live-pill">LIVE</em>}</>
                   ) : canPredict ? (
                     <>
                       <input aria-label={`${homeTeam.name} predicted goals`} inputMode="numeric" max="20" min="0" onChange={(event) => updateScore(fixture.id, "home", Number(event.target.value))} type="number" value={predicted.home} />
-                      <span>–</span>
+                      <span>â€“</span>
                       <input aria-label={`${awayTeam.name} predicted goals`} inputMode="numeric" max="20" min="0" onChange={(event) => updateScore(fixture.id, "away", Number(event.target.value))} type="number" value={predicted.away} />
                     </>
                   ) : (
@@ -3328,7 +3338,7 @@ function GroupOpponentPreviewModal({
       >
         <header className="group-match-modal-header">
           <div>
-            <span className="eyebrow">GROUP {group.id} · SYSTEM-GENERATED</span>
+            <span className="eyebrow">GROUP {group.id} Â· SYSTEM-GENERATED</span>
             <h2 id="opponent-preview-title">Round of 32 possible routes</h2>
             <p>{manualSimulationMode ? "This preview follows your current manual table and third-place board before mapping FIFA Round of 32 slots." : `Every remaining Group ${group.id} match is simulated as home win, draw, or away win. The table is recalculated for every combination before mapping FIFA Round of 32 slots.`}</p>
           </div>
@@ -3356,7 +3366,7 @@ function GroupOpponentPreviewModal({
                       <Flag team={preview.team} />
                       <div>
                         <strong>{preview.team.name}</strong>
-                        <span>{formatGroupPosition(preview.currentPosition)} now · {preview.currentStats.mp} MP · {preview.currentStats.pts} Pts · {preview.currentStats.gd > 0 ? "+" : ""}{preview.currentStats.gd} GD</span>
+                        <span>{formatGroupPosition(preview.currentPosition)} now Â· {preview.currentStats.mp} MP Â· {preview.currentStats.pts} Pts Â· {preview.currentStats.gd > 0 ? "+" : ""}{preview.currentStats.gd} GD</span>
                       </div>
                     </div>
                     <span className={`scenario-status-pill ${getPreviewPillClass(preview)}`}>
@@ -3473,7 +3483,7 @@ function Footer() {
   return (
     <footer className="site-footer">
       <div className="footer-brand"><strong>FIFA</strong><span>WORLD CUP 26 BRACKET CHALLENGE</span></div>
-      <p>Team groups, flags and current match statistics are sourced from FIFA’s official standings feed. This is an unofficial predictor concept.</p>
+      <p>Team groups, flags and current match statistics are sourced from FIFAâ€™s official standings feed. This is an unofficial predictor concept.</p>
       <nav><a href={fifaStandingsPage} target="_blank" rel="noreferrer">FIFA standings</a><a href="#privacy">Privacy</a><a href="#help">Help</a></nav>
     </footer>
   );
