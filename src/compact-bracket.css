@@ -1072,3 +1072,45 @@
     font-size: 7px;
   }
 }
+/* Layer later knockout rounds above earlier rounds so left-side overflow cannot paint over the next round. */
+.official-bracket-shell {
+  isolation: isolate;
+}
+
+.compact-round,
+.bracket-centre-column {
+  position: relative;
+}
+
+.compact-round-8 {
+  z-index: 1;
+}
+
+.compact-round-4 {
+  z-index: 2;
+}
+
+.compact-round-2 {
+  z-index: 3;
+}
+
+.compact-round-1 {
+  z-index: 4;
+}
+
+.bracket-centre-column {
+  z-index: 5;
+}
+
+@media (min-width: 901px) {
+  .compact-round-left.compact-round-4 .official-match-card,
+  .compact-round-left.compact-round-2 .official-match-card,
+  .compact-round-left.compact-round-1 .official-match-card {
+    width: calc(100% - clamp(8px, 0.8vw, 16px));
+    margin-left: clamp(8px, 0.8vw, 16px);
+  }
+
+  .compact-round-left.compact-round-8 .official-match-card {
+    width: calc(100% - clamp(4px, 0.45vw, 9px));
+  }
+}
