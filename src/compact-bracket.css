@@ -1001,3 +1001,74 @@
     font-size: 8px;
   }
 }
+/* Keep compact bracket cards from expanding into neighbouring rounds when scores/badges are present. */
+.official-match-card {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.official-match-number,
+.official-match-card button,
+.official-team-placeholder {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.official-match-card button {
+  grid-template-columns: 17px 21px minmax(0, 1fr) minmax(0, 17px) 16px;
+}
+
+.official-match-card button.round32-team-row {
+  grid-template-columns: 21px minmax(0, 1fr) minmax(0, 17px) 16px;
+}
+
+.match-team-score {
+  max-width: 17px;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: clip;
+}
+
+.marker-stack {
+  width: 16px !important;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.official-winner-marker,
+.user-pick-marker {
+  width: 10px;
+  height: 10px;
+  font-size: 6px;
+}
+
+@media (max-width: 900px) {
+  .official-match-card button {
+    grid-template-columns: 25px 29px minmax(0, 1fr) minmax(20px, auto) 28px;
+  }
+
+  .official-match-card button.round32-team-row {
+    grid-template-columns: 29px minmax(0, 1fr) minmax(20px, auto) 28px;
+  }
+
+  .match-team-score {
+    max-width: none;
+  }
+
+  .marker-stack {
+    width: auto !important;
+    min-width: 20px;
+    overflow: visible;
+  }
+
+  .official-winner-marker,
+  .user-pick-marker {
+    width: 12px;
+    height: 12px;
+    font-size: 7px;
+  }
+}
