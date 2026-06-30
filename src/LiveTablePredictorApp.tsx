@@ -59,6 +59,13 @@ type GroupOrder = Record<string, string[]>;
 type StatsMap = Record<string, TeamStats>;
 type RankingMap = Record<string, PredictionRanking>;
 type BracketPicks = Record<string, string>;
+type PredictionPath = {
+  id: string;
+  name: string;
+  picks: BracketPicks;
+  createdAt: string;
+  updatedAt: string;
+};
 type BracketMode = "official" | "prediction";
 type BracketRoundKey = "round32" | "round16" | "quarterFinals" | "semiFinals" | "final";
 type AccuracyRoundSummary = {
@@ -281,6 +288,74 @@ function loadBracketPicks(): BracketPicks {
     );
   } catch {
     return {};
+  }
+}
+
+function createPredictionPathId() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `prediction-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeBracketPicks(value: unknown): BracketPicks {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(([key, teamName]) =>
+      /^m\d+$/.test(key) && typeof teamName === "string" && teamName.trim()
+    )
+  ) as BracketPicks;
+}
+
+function createPredictionPathRecord(name: string, picks: BracketPicks = {}): PredictionPath {
+  const now = new Date().toISOString();
+  return {
+    id: createPredictionPathId(),
+    name,
+    picks,
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+function normalizePredictionPath(value: unknown, index: number): PredictionPath | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const now = new Date().toISOString();
+  const name = typeof raw.name === "string" && raw.name.trim() ? raw.name : `Prediction ${index + 1}`;
+  return {
+    id: typeof raw.id === "string" && raw.id ? raw.id : createPredictionPathId(),
+    name,
+    picks: normalizeBracketPicks(raw.picks),
+    createdAt: typeof raw.createdAt === "string" ? raw.createdAt : now,
+    updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : now
+  };
+}
+
+function loadPredictionPaths(): PredictionPath[] {
+  try {
+    const saved = window.localStorage.getItem("fifa-prediction-paths-v1");
+    if (saved) {
+      const parsed = JSON.parse(saved) as unknown;
+      if (Array.isArray(parsed)) {
+        const paths = parsed
+          .map((path, index) => normalizePredictionPath(path, index))
+          .filter((path): path is PredictionPath => Boolean(path));
+        if (paths.length > 0) return paths;
+      }
+    }
+  } catch {
+    // Fall back to the legacy single-bracket storage below.
+  }
+
+  return [createPredictionPathRecord("Prediction 1", loadBracketPicks())];
+}
+
+function loadActivePredictionPathId(paths: PredictionPath[]) {
+  try {
+    const saved = window.localStorage.getItem("fifa-active-prediction-path-v1");
+    return saved && paths.some((path) => path.id === saved) ? saved : paths[0]?.id ?? "";
+  } catch {
+    return paths[0]?.id ?? "";
   }
 }
 
@@ -1719,7 +1794,8 @@ function LiveTablePredictorApp() {
   const [bracketMode, setBracketMode] = useState<BracketMode>(loadBracketMode);
   const [groupOrder, setGroupOrder] = useState<GroupOrder>(initialOrder);
   const [thirdOrder, setThirdOrder] = useState(() => loadThirdOrder(initialOrder));
-  const [bracketPicks, setBracketPicks] = useState<BracketPicks>(loadBracketPicks);
+  const [predictionPaths, setPredictionPaths] = useState<PredictionPath[]>(loadPredictionPaths);
+  const [activePredictionPathId, setActivePredictionPathId] = useState(() => loadActivePredictionPathId(predictionPaths));
   const [autoPickSnapshot, setAutoPickSnapshot] = useState<BracketPicks | null>(loadAutoPickSnapshot);
   const [autoPickCache, setAutoPickCache] = useState<AutoPickCache | null>(loadAutoPickCache);
   const [stats, setStats] = useState<StatsMap>(cache.stats);
@@ -1840,9 +1916,26 @@ function LiveTablePredictorApp() {
     window.localStorage.setItem("fifa-rank-predictor-thirds-v1", JSON.stringify(thirdOrder));
   }, [thirdOrder]);
 
+  const activePredictionPath = useMemo(
+    () => predictionPaths.find((path) => path.id === activePredictionPathId) ?? predictionPaths[0],
+    [predictionPaths, activePredictionPathId]
+  );
+  const bracketPicks = activePredictionPath?.picks ?? {};
+
   useEffect(() => {
+    if (predictionPaths.length > 0 && !predictionPaths.some((path) => path.id === activePredictionPathId)) {
+      setActivePredictionPathId(predictionPaths[0].id);
+    }
+  }, [predictionPaths, activePredictionPathId]);
+
+  useEffect(() => {
+    window.localStorage.setItem("fifa-prediction-paths-v1", JSON.stringify(predictionPaths));
     window.localStorage.setItem("fifa-rank-predictor-bracket-v1", JSON.stringify(bracketPicks));
-  }, [bracketPicks]);
+  }, [predictionPaths, bracketPicks]);
+
+  useEffect(() => {
+    window.localStorage.setItem("fifa-active-prediction-path-v1", activePredictionPathId);
+  }, [activePredictionPathId]);
 
   useEffect(() => {
     window.localStorage.setItem("fifa-dual-bracket-mode-v1", bracketMode);
@@ -1949,11 +2042,83 @@ function LiveTablePredictorApp() {
   const knockoutPickCount = officialPickOrder.filter((matchNumber) => bracketPicks[`m${matchNumber}`]).length;
 
   useEffect(() => {
-    setBracketPicks((current) => {
-      const sanitized = sanitizeOfficialPicks(current, bracketRoundOf32);
-      return JSON.stringify(sanitized) === JSON.stringify(current) ? current : sanitized;
+    setPredictionPaths((current) => {
+      let changed = false;
+      const now = new Date().toISOString();
+      const next = current.map((path) => {
+        const sanitized = sanitizeOfficialPicks(path.picks, bracketRoundOf32);
+        if (JSON.stringify(sanitized) === JSON.stringify(path.picks)) return path;
+        changed = true;
+        return { ...path, picks: sanitized, updatedAt: now };
+      });
+      return changed ? next : current;
     });
   }, [bracketRoundOf32]);
+
+  function updateActivePredictionPicks(nextPicksOrUpdater: BracketPicks | ((current: BracketPicks) => BracketPicks)) {
+    setPredictionPaths((current) => {
+      const activeId = current.some((path) => path.id === activePredictionPathId)
+        ? activePredictionPathId
+        : current[0]?.id;
+      const now = new Date().toISOString();
+
+      if (!activeId) {
+        const nextPicks = typeof nextPicksOrUpdater === "function"
+          ? nextPicksOrUpdater({})
+          : nextPicksOrUpdater;
+        const path = createPredictionPathRecord("Prediction 1", nextPicks);
+        setActivePredictionPathId(path.id);
+        return [path];
+      }
+
+      return current.map((path) => {
+        if (path.id !== activeId) return path;
+        const nextPicks = typeof nextPicksOrUpdater === "function"
+          ? nextPicksOrUpdater(path.picks)
+          : nextPicksOrUpdater;
+        return { ...path, picks: nextPicks, updatedAt: now };
+      });
+    });
+  }
+
+  function createPredictionPath() {
+    const path = createPredictionPathRecord(`Prediction ${predictionPaths.length + 1}`);
+    setPredictionPaths((current) => [...current, path]);
+    setActivePredictionPathId(path.id);
+    setAutoPickSnapshot(null);
+    setAutoPickCache(null);
+    setBracketMode("prediction");
+  }
+
+  function switchPredictionPath(pathId: string) {
+    if (!predictionPaths.some((path) => path.id === pathId)) return;
+    setActivePredictionPathId(pathId);
+    setAutoPickSnapshot(null);
+    setAutoPickCache(null);
+    setBracketMode("prediction");
+  }
+
+  function renamePredictionPath(pathId: string, name: string) {
+    const limitedName = name.slice(0, 40);
+    setPredictionPaths((current) => current.map((path) =>
+      path.id === pathId ? { ...path, name: limitedName, updatedAt: new Date().toISOString() } : path
+    ));
+  }
+
+  function deletePredictionPath(pathId: string) {
+    const remaining = predictionPaths.filter((path) => path.id !== pathId);
+    if (remaining.length === 0) {
+      const replacement = createPredictionPathRecord("Prediction 1");
+      setPredictionPaths([replacement]);
+      setActivePredictionPathId(replacement.id);
+    } else {
+      setPredictionPaths(remaining);
+      if (activePredictionPathId === pathId) setActivePredictionPathId(remaining[0].id);
+    }
+    setAutoPickSnapshot(null);
+    setAutoPickCache(null);
+    setBracketMode("prediction");
+  }
 
   function switchView(nextView: View) {
     setView(nextView);
@@ -1974,7 +2139,7 @@ function LiveTablePredictorApp() {
       ...current.filter((teamName) => nextThirdNames.includes(teamName)),
       ...nextThirdNames.filter((teamName) => !current.includes(teamName))
     ]);
-    setBracketPicks({});
+    updateActivePredictionPicks({});
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
   }
@@ -1988,7 +2153,7 @@ function LiveTablePredictorApp() {
       next.splice(toIndex, 0, team);
       return next;
     });
-    setBracketPicks({});
+    updateActivePredictionPicks({});
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
   }
@@ -2016,7 +2181,7 @@ function LiveTablePredictorApp() {
     setManualSimulationMode(false);
     setGroupOrder(nextGroupOrder);
     setThirdOrder(rankedThirds.map((team) => team.name));
-    setBracketPicks({});
+    updateActivePredictionPicks({});
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
     setPredictionGroup(null);
@@ -2026,7 +2191,7 @@ function LiveTablePredictorApp() {
     setManualSimulationMode(false);
     setGroupOrder(rankedGroupOrder);
     setThirdOrder(rankThirdNamesForOrder(rankedGroupOrder, projectedStats));
-    setBracketPicks({});
+    updateActivePredictionPicks({});
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
   }
@@ -2038,7 +2203,7 @@ function LiveTablePredictorApp() {
     setThirdOrder(groups.map((group) => defaults[group.id][2]));
     setScorePredictions({});
     setPredictionGroup(null);
-    setBracketPicks({});
+    updateActivePredictionPicks({});
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
   }
@@ -2049,9 +2214,7 @@ function LiveTablePredictorApp() {
     if (bracketPicks[pickKey] === teamName) return;
 
     const manualBaseline = autoPickSnapshot ?? bracketPicks;
-    setBracketPicks(
-      sanitizeOfficialPicks({ ...manualBaseline, [pickKey]: teamName }, bracketRoundOf32)
-    );
+    updateActivePredictionPicks(sanitizeOfficialPicks({ ...manualBaseline, [pickKey]: teamName }, bracketRoundOf32));
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
   }
@@ -2059,7 +2222,7 @@ function LiveTablePredictorApp() {
   function resetMatchToOfficial(matchNumber: number) {
     const officialWinner = officialPicks[`m${matchNumber}`];
     if (!officialWinner) return;
-    setBracketPicks((current) => sanitizeOfficialPicks({ ...current, [`m${matchNumber}`]: officialWinner }, bracketRoundOf32));
+    updateActivePredictionPicks((current) => sanitizeOfficialPicks({ ...current, [`m${matchNumber}`]: officialWinner }, bracketRoundOf32));
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
   }
@@ -2067,7 +2230,7 @@ function LiveTablePredictorApp() {
   function resetRoundToOfficial(roundKey: BracketRoundKey) {
     const round = bracketRoundDefinitions.find((item) => item.key === roundKey);
     if (!round) return;
-    setBracketPicks((current) => {
+    updateActivePredictionPicks((current) => {
       const next = { ...current };
       round.numbers.forEach((matchNumber) => {
         const officialWinner = officialPicks[`m${matchNumber}`];
@@ -2081,14 +2244,14 @@ function LiveTablePredictorApp() {
   }
 
   function resetBracketToOfficial() {
-    setBracketPicks(sanitizeOfficialPicks(officialPicks, bracketRoundOf32));
+    updateActivePredictionPicks(sanitizeOfficialPicks(officialPicks, bracketRoundOf32));
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
   }
 
   function autoPickBracket() {
     if (autoPickSnapshot !== null) {
-      setBracketPicks(autoPickSnapshot);
+      updateActivePredictionPicks(autoPickSnapshot);
       setAutoPickSnapshot(null);
       return;
     }
@@ -2096,7 +2259,7 @@ function LiveTablePredictorApp() {
     const baseline = sanitizeOfficialPicks(bracketPicks, bracketRoundOf32);
     if (autoPickCache && sameBracketPicks(autoPickCache.baseline, baseline)) {
       setAutoPickSnapshot(baseline);
-      setBracketPicks(autoPickCache.generated);
+      updateActivePredictionPicks(autoPickCache.generated);
       return;
     }
 
@@ -2105,7 +2268,7 @@ function LiveTablePredictorApp() {
       const pickKey = `m${matchNumber}`;
       if (next[pickKey]) return;
 
-      const match = resolveOfficialMatch(matchNumber, roundOf32, next);
+      const match = resolveOfficialMatch(matchNumber, bracketRoundOf32, next);
       const [teamA, teamB] = match.teams;
       const winner = teamA && teamB
         ? pickProbableWinner(
@@ -2120,11 +2283,11 @@ function LiveTablePredictorApp() {
 
     setAutoPickCache({ baseline, generated: next });
     setAutoPickSnapshot(baseline);
-    setBracketPicks(next);
+    updateActivePredictionPicks(next);
   }
 
   function resetBracket() {
-    setBracketPicks({});
+    updateActivePredictionPicks({});
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
   }
@@ -2177,15 +2340,21 @@ function LiveTablePredictorApp() {
           />
         ) : (
           <KnockoutStage
-            roundOf32={roundOf32}
+            roundOf32={bracketRoundOf32}
             mode={bracketMode}
             picks={activeBracketPicks}
             predictionPicks={bracketPicks}
+            predictionPaths={predictionPaths}
+            activePredictionPathId={activePredictionPathId}
             officialPicks={officialPicks}
             accuracy={predictionAccuracy}
             champion={activeChampion}
             knockoutFixtures={knockoutFixtures}
             onModeChange={setBracketMode}
+            onPredictionPathChange={switchPredictionPath}
+            onCreatePredictionPath={createPredictionPath}
+            onDeletePredictionPath={deletePredictionPath}
+            onRenamePredictionPath={renamePredictionPath}
             onPick={selectWinner}
             onAutoPick={autoPickBracket}
             autoPickActive={autoPickSnapshot !== null}
@@ -2616,11 +2785,17 @@ function KnockoutStage({
   mode,
   picks,
   predictionPicks,
+  predictionPaths,
+  activePredictionPathId,
   officialPicks,
   accuracy,
   champion,
   knockoutFixtures,
   onModeChange,
+  onPredictionPathChange,
+  onCreatePredictionPath,
+  onDeletePredictionPath,
+  onRenamePredictionPath,
   onPick,
   onAutoPick,
   autoPickActive,
@@ -2634,11 +2809,17 @@ function KnockoutStage({
   mode: BracketMode;
   picks: BracketPicks;
   predictionPicks: BracketPicks;
+  predictionPaths: PredictionPath[];
+  activePredictionPathId: string;
   officialPicks: BracketPicks;
   accuracy: PredictionAccuracy;
   champion?: Team;
   knockoutFixtures: KnockoutFixture[];
   onModeChange: (mode: BracketMode) => void;
+  onPredictionPathChange: (pathId: string) => void;
+  onCreatePredictionPath: () => void;
+  onDeletePredictionPath: (pathId: string) => void;
+  onRenamePredictionPath: (pathId: string, name: string) => void;
   onPick: (matchNumber: number, teamName: string) => void;
   onAutoPick: () => void;
   autoPickActive: boolean;
@@ -2650,6 +2831,7 @@ function KnockoutStage({
 }) {
   const officialCompletedCount = Object.values(officialPicks).filter(Boolean).length;
   const isPredictionMode = mode === "prediction";
+  const activePredictionPath = predictionPaths.find((path) => path.id === activePredictionPathId) ?? predictionPaths[0];
 
   return (
     <section className="content-section official-knockout-section dual-bracket-section">
@@ -2717,6 +2899,38 @@ function KnockoutStage({
           )}
         </div>
       </header>
+
+      {isPredictionMode && activePredictionPath && (
+        <section className="prediction-path-manager" aria-label="Saved prediction paths">
+          <div className="prediction-path-copy">
+            <span>Saved prediction paths</span>
+            <strong>{activePredictionPath.name.trim() || "Untitled prediction"}</strong>
+            <p>Create separate brackets for different what-if journeys. Each path keeps its own picks.</p>
+          </div>
+          <label>
+            <span>Open path</span>
+            <select value={activePredictionPathId} onChange={(event) => onPredictionPathChange(event.currentTarget.value)}>
+              {predictionPaths.map((path) => (
+                <option key={path.id} value={path.id}>{path.name.trim() || "Untitled prediction"}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Path name</span>
+            <input
+              maxLength={40}
+              onChange={(event) => onRenamePredictionPath(activePredictionPath.id, event.currentTarget.value)}
+              placeholder="Prediction name"
+              type="text"
+              value={activePredictionPath.name}
+            />
+          </label>
+          <div className="prediction-path-actions">
+            <button className="secondary-button accent" onClick={onCreatePredictionPath} type="button"><Sparkles size={16} /> New path</button>
+            <button className="secondary-button danger" onClick={() => onDeletePredictionPath(activePredictionPath.id)} type="button"><X size={16} /> Delete path</button>
+          </div>
+        </section>
+      )}
 
       <div className="dual-bracket-summary-grid">
         <article className="dual-summary-card official-sync-card">
