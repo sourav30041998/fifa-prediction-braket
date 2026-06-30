@@ -3095,10 +3095,22 @@ function OfficialMatchCard({
 
   return (
     <article className={`official-match-card ${selected ? "decided" : ""} ${featured ? "featured" : ""} ${readOnly ? "read-only" : ""}`}>
-      <span className="official-match-number">
-        <span>M{match.number}</span>
+      <div className="official-match-number">
+        <span className="match-header-left">
+          <span>M{match.number}</span>
+          {mode === "prediction" && officialWinner && (
+            <span className="match-inline-meta">
+              <span className="official-winner-text">Official: {officialWinner.name}</span>
+              {predictionSelected && predictionSelected !== officialSelected && <span className="overridden-text">Overridden</span>}
+              {predictionSelected === officialSelected && <span className="aligned-text">Aligned</span>}
+              {canResetToOfficial && (
+                <button className="match-inline-reset" onClick={() => onResetToOfficial(match.number)} type="button">Reset</button>
+              )}
+            </span>
+          )}
+        </span>
         <span className={`match-status-pill ${statusClass}`}>{statusLabel}</span>
-      </span>
+      </div>
       {match.teams.map((team, index) => {
         const isSelected = selected === team?.name;
         const isOfficialWinner = officialSelected === team?.name;
@@ -3151,16 +3163,7 @@ function OfficialMatchCard({
           </div>
         );
       })}
-      {mode === "prediction" && officialWinner && (
-        <div className="match-override-footer">
-          <span className="official-winner-text">Official: {officialWinner.name}</span>
-          {predictionSelected && predictionSelected !== officialSelected && <span className="overridden-text">Overridden</span>}
-          {predictionSelected === officialSelected && <span className="aligned-text">Aligned</span>}
-          {canResetToOfficial && (
-            <button onClick={() => onResetToOfficial(match.number)} type="button">Reset this match</button>
-          )}
-        </div>
-      )}
+
     </article>
   );
 }

@@ -929,3 +929,75 @@
     align-items: stretch;
   }
 }
+.match-header-left {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.match-inline-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+  color: #66758d;
+  font-size: 6px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.match-inline-meta .official-winner-text {
+  max-width: clamp(34px, 4.6vw, 72px);
+}
+
+.match-inline-meta .overridden-text,
+.match-inline-meta .aligned-text {
+  flex: 0 0 auto;
+  padding: 0 3px;
+  font-size: 6px;
+  line-height: 1.25;
+}
+
+.match-inline-reset {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 999px;
+  background: #eef3ff;
+  padding: 1px 4px;
+  color: var(--royal);
+  font-size: 6px;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.official-match-number .match-status-pill {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 1180px) {
+  .match-inline-meta .official-winner-text {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .match-inline-meta {
+    font-size: 8px;
+  }
+
+  .match-inline-meta .official-winner-text {
+    display: inline;
+    max-width: 120px;
+  }
+
+  .match-inline-reset,
+  .match-inline-meta .overridden-text,
+  .match-inline-meta .aligned-text {
+    font-size: 8px;
+  }
+}
