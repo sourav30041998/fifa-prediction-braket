@@ -59,6 +59,22 @@ type GroupOrder = Record<string, string[]>;
 type StatsMap = Record<string, TeamStats>;
 type RankingMap = Record<string, PredictionRanking>;
 type BracketPicks = Record<string, string>;
+type BracketMode = "official" | "prediction";
+type BracketRoundKey = "round32" | "round16" | "quarterFinals" | "semiFinals" | "final";
+type AccuracyRoundSummary = {
+  key: BracketRoundKey;
+  label: string;
+  correct: number;
+  completed: number;
+  total: number;
+};
+type PredictionAccuracy = {
+  rounds: AccuracyRoundSummary[];
+  correct: number;
+  completed: number;
+  percentage: number;
+  finalCorrect: boolean | null;
+};
 type AutoPickCache = {
   baseline: BracketPicks;
   generated: BracketPicks;
@@ -75,6 +91,16 @@ type FifaMatchResult = {
   AwayTeamScore: number | null;
   HomeTeamId: string;
   AwayTeamId: string;
+  MatchNumber?: number | string;
+  MatchNo?: number | string;
+  MatchCode?: string;
+  Description?: string;
+  HomeTeamPenaltyScore?: number | null;
+  AwayTeamPenaltyScore?: number | null;
+  HomeTeamPenalty?: number | null;
+  AwayTeamPenalty?: number | null;
+  WinnerTeamId?: string;
+  WinningTeamId?: string;
 };
 
 type FifaRanking = {
@@ -113,6 +139,23 @@ type GroupFixture = {
   live: boolean;
   status: FixtureStatus;
   resultStatus: number;
+};
+
+type KnockoutFixture = {
+  id: string;
+  number?: number;
+  kickoff: string;
+  homeCode: string;
+  awayCode: string;
+  homeScore: number | null;
+  awayScore: number | null;
+  homePenaltyScore: number | null;
+  awayPenaltyScore: number | null;
+  completed: boolean;
+  live: boolean;
+  status: FixtureStatus;
+  resultStatus: number;
+  winnerCode?: string;
 };
 
 type FixtureStatus = "scheduled" | "live" | "completed";
@@ -215,6 +258,14 @@ function loadBracketPicks(): BracketPicks {
   }
 }
 
+function loadBracketMode(): BracketMode {
+  try {
+    return window.localStorage.getItem("fifa-dual-bracket-mode-v1") === "official" ? "official" : "prediction";
+  } catch {
+    return "prediction";
+  }
+}
+
 function loadAutoPickSnapshot(): BracketPicks | null {
   try {
     const saved = window.localStorage.getItem("fifa-auto-pick-snapshot-v1");
@@ -265,6 +316,14 @@ function loadCachedFixtures(): GroupFixture[] {
   }
 }
 
+function loadCachedKnockoutFixtures(): KnockoutFixture[] {
+  try {
+    return JSON.parse(window.localStorage.getItem("fifa-knockout-fixtures-cache-v1") ?? "[]");
+  } catch {
+    return [];
+  }
+}
+
 function loadScorePredictions(): ScorePredictions {
   try {
     return JSON.parse(window.localStorage.getItem("fifa-score-predictions-v1") ?? "{}");
@@ -296,6 +355,144 @@ function getFixtureLifecycle(match: FifaMatchResult, hasScore: boolean, now = Da
   const status: FixtureStatus = completed ? "completed" : live ? "live" : "scheduled";
 
   return { completed, live, status, resultStatus };
+}
+
+function normalizeTeamCode(value?: string) {
+  const code = value?.trim().toUpperCase();
+  return code && allTeams.some((team) => team.code === code) ? code : undefined;
+}
+
+function readStringField(raw: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = raw[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return undefined;
+}
+
+function readNumberField(raw: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = raw[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  }
+  return undefined;
+}
+
+function inferKnockoutMatchNumber(match: FifaMatchResult) {
+  const raw = match as FifaMatchResult & Record<string, unknown>;
+  const directNumber = readNumberField(raw, ["MatchNumber", "MatchNo", "MatchNoLong", "MatchIndex", "Order"]);
+  if (directNumber && officialPickOrder.includes(directNumber)) return directNumber;
+
+  const text = [match.MatchNumber, match.MatchNo, match.MatchCode, match.Description, match.IdMatch]
+    .filter((value): value is string | number => typeof value === "string" || typeof value === "number")
+    .map(String)
+    .join(" ");
+  const matchNumber = text.match(/(?:^|[^0-9])(?:M)?(7[3-9]|8[0-9]|9[0-9]|10[0-4])(?:[^0-9]|$)/i)?.[1];
+  const parsed = matchNumber ? Number(matchNumber) : undefined;
+  return parsed && officialPickOrder.includes(parsed) ? parsed : undefined;
+}
+
+function getResultTeamCode(match: FifaMatchResult, side: "Home" | "Away", teamCodeById: Record<string, string>) {
+  const raw = match as FifaMatchResult & Record<string, unknown>;
+  const id = side === "Home" ? match.HomeTeamId : match.AwayTeamId;
+  const idFromFlexibleField = readStringField(raw, [`${side}TeamId`, `Id${side}Team`, `${side}IdTeam`]);
+  const fromId = teamCodeById[id] ?? (idFromFlexibleField ? teamCodeById[idFromFlexibleField] : undefined);
+  const direct = readStringField(raw, [
+    `${side}TeamCountryCode`,
+    `${side}CountryCode`,
+    `${side}TeamCode`,
+    `${side}TeamAbbreviation`,
+    `${side}TeamIdCountry`,
+    `IdCountry${side}`
+  ]);
+  return normalizeTeamCode(fromId ?? direct);
+}
+
+function getPenaltyScore(match: FifaMatchResult, side: "Home" | "Away") {
+  const raw = match as FifaMatchResult & Record<string, unknown>;
+  return readNumberField(raw, [
+    `${side}TeamPenaltyScore`,
+    `${side}TeamPenalty`,
+    `${side}PenaltyScore`,
+    `${side}TeamPenaltyShootoutScore`
+  ]) ?? null;
+}
+
+function getCompletedWinnerCode(
+  match: FifaMatchResult,
+  teamCodeById: Record<string, string>,
+  homeCode: string,
+  awayCode: string,
+  homePenaltyScore: number | null,
+  awayPenaltyScore: number | null
+) {
+  const raw = match as FifaMatchResult & Record<string, unknown>;
+  const winnerId = match.WinnerTeamId ?? match.WinningTeamId ?? readStringField(raw, ["WinnerIdTeam", "WinningTeamId", "WinnerTeamId"]);
+  const winnerCode = normalizeTeamCode(winnerId ? teamCodeById[winnerId] ?? winnerId : undefined);
+  if (winnerCode) return winnerCode;
+
+  if (match.HomeTeamScore !== null && match.AwayTeamScore !== null) {
+    if (match.HomeTeamScore > match.AwayTeamScore) return homeCode;
+    if (match.AwayTeamScore > match.HomeTeamScore) return awayCode;
+  }
+
+  if (homePenaltyScore !== null && awayPenaltyScore !== null) {
+    if (homePenaltyScore > awayPenaltyScore) return homeCode;
+    if (awayPenaltyScore > homePenaltyScore) return awayCode;
+  }
+
+  return undefined;
+}
+
+function parseFifaKnockoutFixtures(rows: FifaStanding[]) {
+  const teamCodeById = Object.fromEntries(
+    rows.flatMap((row) => row.Team?.IdTeam && row.Team.IdCountry ? [[row.Team.IdTeam, row.Team.IdCountry]] : [])
+  ) as Record<string, string>;
+  const fixtures = new Map<string, KnockoutFixture>();
+
+  rows.forEach((row) => {
+    const groupDescription = row.Group?.[0]?.Description ?? "";
+    const looksLikeGroupStage = /^Group [A-L]$/i.test(groupDescription.trim());
+    row.MatchResults?.forEach((match) => {
+      const matchNumber = inferKnockoutMatchNumber(match);
+      if (!matchNumber && looksLikeGroupStage) return;
+      if (matchNumber && !officialPickOrder.includes(matchNumber)) return;
+      if (fixtures.has(match.IdMatch)) return;
+
+      const homeCode = getResultTeamCode(match, "Home", teamCodeById);
+      const awayCode = getResultTeamCode(match, "Away", teamCodeById);
+      if (!homeCode || !awayCode) return;
+
+      const hasScore = match.HomeTeamScore !== null && match.AwayTeamScore !== null;
+      const lifecycle = getFixtureLifecycle(match, hasScore);
+      const homePenaltyScore = getPenaltyScore(match, "Home");
+      const awayPenaltyScore = getPenaltyScore(match, "Away");
+      const winnerCode = lifecycle.completed
+        ? getCompletedWinnerCode(match, teamCodeById, homeCode, awayCode, homePenaltyScore, awayPenaltyScore)
+        : undefined;
+
+      fixtures.set(match.IdMatch, {
+        id: match.IdMatch,
+        number: matchNumber,
+        kickoff: match.StartTime,
+        homeCode,
+        awayCode,
+        homeScore: match.HomeTeamScore,
+        awayScore: match.AwayTeamScore,
+        homePenaltyScore,
+        awayPenaltyScore,
+        completed: lifecycle.completed,
+        live: lifecycle.live,
+        status: lifecycle.status,
+        resultStatus: lifecycle.resultStatus,
+        winnerCode
+      });
+    });
+  });
+
+  return [...fixtures.values()].sort((a, b) => a.kickoff.localeCompare(b.kickoff));
 }
 
 function parseFifaFixtures(rows: FifaStanding[]) {
@@ -521,6 +718,14 @@ const officialPickOrder = [
   89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104
 ];
 
+const bracketRoundDefinitions: Array<{ key: BracketRoundKey; label: string; numbers: number[] }> = [
+  { key: "round32", label: "Round of 32", numbers: [73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88] },
+  { key: "round16", label: "Round of 16", numbers: [89, 90, 91, 92, 93, 94, 95, 96] },
+  { key: "quarterFinals", label: "Quarter-final", numbers: [97, 98, 99, 100] },
+  { key: "semiFinals", label: "Semi-final", numbers: [101, 102] },
+  { key: "final", label: "Final", numbers: [104] }
+];
+
 const leftBracketMatches = {
   round32: [74, 77, 73, 75, 83, 84, 81, 82],
   round16: [90, 89, 93, 94],
@@ -624,6 +829,76 @@ function sanitizeOfficialPicks(picks: BracketPicks, roundOf32: Map<number, Offic
 
 function sameBracketPicks(left: BracketPicks, right: BracketPicks) {
   return officialPickOrder.every((matchNumber) => left[`m${matchNumber}`] === right[`m${matchNumber}`]);
+}
+
+function matchHasTeamPair(match: OfficialMatch, homeCode: string, awayCode: string) {
+  const codes = match.teams.map((team) => team?.code).filter((code): code is string => Boolean(code));
+  return codes.length === 2 && codes.includes(homeCode) && codes.includes(awayCode);
+}
+
+function getKnockoutFixtureForMatch(
+  matchNumber: number,
+  fixtures: KnockoutFixture[],
+  roundOf32: Map<number, OfficialMatch>,
+  officialPicks: BracketPicks
+) {
+  const direct = fixtures.find((fixture) => fixture.number === matchNumber);
+  if (direct) return direct;
+
+  const match = resolveOfficialMatch(matchNumber, roundOf32, officialPicks);
+  const [teamA, teamB] = match.teams;
+  if (!teamA || !teamB) return undefined;
+
+  return fixtures.find((fixture) => !fixture.number && matchHasTeamPair(match, fixture.homeCode, fixture.awayCode));
+}
+
+function buildOfficialKnockoutPicks(fixtures: KnockoutFixture[], roundOf32: Map<number, OfficialMatch>) {
+  const officialPicks: BracketPicks = {};
+
+  officialPickOrder.forEach((matchNumber) => {
+    const fixture = getKnockoutFixtureForMatch(matchNumber, fixtures, roundOf32, officialPicks);
+    if (!fixture?.completed || !fixture.winnerCode) return;
+
+    const winner = findTeamByCode(fixture.winnerCode);
+    if (!winner) return;
+
+    const match = resolveOfficialMatch(matchNumber, roundOf32, officialPicks);
+    if (match.teams.some((team) => team?.code === winner.code)) {
+      officialPicks[`m${matchNumber}`] = winner.name;
+    }
+  });
+
+  return officialPicks;
+}
+
+function buildPredictionAccuracy(predictionPicks: BracketPicks, officialPicks: BracketPicks): PredictionAccuracy {
+  const rounds = bracketRoundDefinitions.map((round) => {
+    const completed = round.numbers.filter((matchNumber) => Boolean(officialPicks[`m${matchNumber}`]));
+    const correct = completed.filter((matchNumber) => predictionPicks[`m${matchNumber}`] === officialPicks[`m${matchNumber}`]).length;
+    return {
+      key: round.key,
+      label: round.label,
+      correct,
+      completed: completed.length,
+      total: round.numbers.length
+    };
+  });
+  const completed = rounds.reduce((total, round) => total + round.completed, 0);
+  const correct = rounds.reduce((total, round) => total + round.correct, 0);
+  return {
+    rounds,
+    completed,
+    correct,
+    percentage: completed ? Math.round((correct / completed) * 100) : 0,
+    finalCorrect: officialPicks.m104 ? predictionPicks.m104 === officialPicks.m104 : null
+  };
+}
+
+function getFixtureStatusLabel(fixture?: KnockoutFixture) {
+  if (!fixture) return "Upcoming";
+  if (fixture.completed) return "Completed";
+  if (fixture.live) return "Live";
+  return "Upcoming";
 }
 
 function hasEveryGroupReachedSecondMatch(stats: StatsMap) {
@@ -1320,6 +1595,7 @@ function LiveTablePredictorApp() {
   const cache = useMemo(loadCachedStats, []);
   const rankingCache = useMemo(loadCachedRankings, []);
   const [view, setView] = useState<View>("groups");
+  const [bracketMode, setBracketMode] = useState<BracketMode>(loadBracketMode);
   const [groupOrder, setGroupOrder] = useState<GroupOrder>(initialOrder);
   const [thirdOrder, setThirdOrder] = useState(() => loadThirdOrder(initialOrder));
   const [bracketPicks, setBracketPicks] = useState<BracketPicks>(loadBracketPicks);
@@ -1328,6 +1604,7 @@ function LiveTablePredictorApp() {
   const [stats, setStats] = useState<StatsMap>(cache.stats);
   const [rankings, setRankings] = useState<RankingMap>(rankingCache.rankings);
   const [fixtures, setFixtures] = useState<GroupFixture[]>(loadCachedFixtures);
+  const [knockoutFixtures, setKnockoutFixtures] = useState<KnockoutFixture[]>(loadCachedKnockoutFixtures);
   const [scorePredictions, setScorePredictions] = useState<ScorePredictions>(loadScorePredictions);
   const [manualSimulationMode, setManualSimulationMode] = useState(loadManualSimulationMode);
   const [predictionGroup, setPredictionGroup] = useState<string | null>(null);
@@ -1347,14 +1624,17 @@ function LiveTablePredictorApp() {
       });
       if (!response.ok) throw new Error(`FIFA returned ${response.status}`);
       const payload = (await response.json()) as { Results?: FifaStanding[] };
-      const nextStats = parseFifaStandings(payload.Results ?? []);
-      const nextFixtures = parseFifaFixtures(payload.Results ?? []);
+      const results = payload.Results ?? [];
+      const nextStats = parseFifaStandings(results);
+      const nextFixtures = parseFifaFixtures(results);
+      const nextKnockoutFixtures = parseFifaKnockoutFixtures(results);
       if (Object.keys(nextStats).length < 48 || nextFixtures.length < 72) {
         throw new Error("Incomplete FIFA standings response");
       }
       const updatedAt = new Date().toISOString();
       setStats(nextStats);
       setFixtures(nextFixtures);
+      setKnockoutFixtures(nextKnockoutFixtures);
       setLastUpdated(updatedAt);
       setFeedState("live");
       window.localStorage.setItem(
@@ -1362,6 +1642,7 @@ function LiveTablePredictorApp() {
         JSON.stringify({ stats: nextStats, updatedAt })
       );
       window.localStorage.setItem("fifa-live-fixtures-cache-v1", JSON.stringify(nextFixtures));
+      window.localStorage.setItem("fifa-knockout-fixtures-cache-v1", JSON.stringify(nextKnockoutFixtures));
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       setFeedState(Object.keys(loadCachedStats().stats).length ? "cached" : "error");
@@ -1428,6 +1709,10 @@ function LiveTablePredictorApp() {
   useEffect(() => {
     window.localStorage.setItem("fifa-rank-predictor-bracket-v1", JSON.stringify(bracketPicks));
   }, [bracketPicks]);
+
+  useEffect(() => {
+    window.localStorage.setItem("fifa-dual-bracket-mode-v1", bracketMode);
+  }, [bracketMode]);
 
   useEffect(() => {
     if (autoPickSnapshot === null) {
@@ -1510,8 +1795,19 @@ function LiveTablePredictorApp() {
     () => buildRoundOf32(groupOrder, thirdOrder),
     [groupOrder, thirdOrder]
   );
+  const officialPicks = useMemo(
+    () => buildOfficialKnockoutPicks(knockoutFixtures, roundOf32),
+    [knockoutFixtures, roundOf32]
+  );
+  const predictionAccuracy = useMemo(
+    () => buildPredictionAccuracy(bracketPicks, officialPicks),
+    [bracketPicks, officialPicks]
+  );
+  const activeBracketPicks = bracketMode === "official" ? officialPicks : bracketPicks;
   const roundOf32PreviewReady = hasEveryGroupReachedSecondMatch(projectedStats);
-  const champion = findTeam(bracketPicks.m104);
+  const predictionChampion = findTeam(bracketPicks.m104);
+  const officialChampion = findTeam(officialPicks.m104);
+  const activeChampion = bracketMode === "official" ? officialChampion : predictionChampion;
   const knockoutPickCount = officialPickOrder.filter((matchNumber) => bracketPicks[`m${matchNumber}`]).length;
 
   useEffect(() => {
@@ -1610,6 +1906,7 @@ function LiveTablePredictorApp() {
   }
 
   function selectWinner(matchNumber: number, teamName: string) {
+    if (bracketMode === "official") return;
     const pickKey = `m${matchNumber}`;
     if (bracketPicks[pickKey] === teamName) return;
 
@@ -1617,6 +1914,36 @@ function LiveTablePredictorApp() {
     setBracketPicks(
       sanitizeOfficialPicks({ ...manualBaseline, [pickKey]: teamName }, roundOf32)
     );
+    setAutoPickSnapshot(null);
+    setAutoPickCache(null);
+  }
+
+  function resetMatchToOfficial(matchNumber: number) {
+    const officialWinner = officialPicks[`m${matchNumber}`];
+    if (!officialWinner) return;
+    setBracketPicks((current) => sanitizeOfficialPicks({ ...current, [`m${matchNumber}`]: officialWinner }, roundOf32));
+    setAutoPickSnapshot(null);
+    setAutoPickCache(null);
+  }
+
+  function resetRoundToOfficial(roundKey: BracketRoundKey) {
+    const round = bracketRoundDefinitions.find((item) => item.key === roundKey);
+    if (!round) return;
+    setBracketPicks((current) => {
+      const next = { ...current };
+      round.numbers.forEach((matchNumber) => {
+        const officialWinner = officialPicks[`m${matchNumber}`];
+        if (officialWinner) next[`m${matchNumber}`] = officialWinner;
+        else delete next[`m${matchNumber}`];
+      });
+      return sanitizeOfficialPicks(next, roundOf32);
+    });
+    setAutoPickSnapshot(null);
+    setAutoPickCache(null);
+  }
+
+  function resetBracketToOfficial() {
+    setBracketPicks(sanitizeOfficialPicks(officialPicks, roundOf32));
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
   }
@@ -1688,8 +2015,8 @@ function LiveTablePredictorApp() {
       </div>
 
       <main>
-        <Hero view={view} champion={champion} />
-        <ProgressBar view={view} knockoutPickCount={knockoutPickCount} champion={champion} />
+        <Hero view={view} champion={activeChampion} />
+        <ProgressBar view={view} knockoutPickCount={knockoutPickCount} champion={predictionChampion} />
         {view === "groups" ? (
           <GroupPredictor
             groupOrder={groupOrder}
@@ -1713,12 +2040,21 @@ function LiveTablePredictorApp() {
         ) : (
           <KnockoutStage
             roundOf32={roundOf32}
-            picks={bracketPicks}
-            champion={champion}
+            mode={bracketMode}
+            picks={activeBracketPicks}
+            predictionPicks={bracketPicks}
+            officialPicks={officialPicks}
+            accuracy={predictionAccuracy}
+            champion={activeChampion}
+            knockoutFixtures={knockoutFixtures}
+            onModeChange={setBracketMode}
             onPick={selectWinner}
             onAutoPick={autoPickBracket}
             autoPickActive={autoPickSnapshot !== null}
-            onReset={resetBracket}
+            onResetMatchToOfficial={resetMatchToOfficial}
+            onResetRoundToOfficial={resetRoundToOfficial}
+            onResetToOfficial={resetBracketToOfficial}
+            onClearPredictions={resetBracket}
             onBack={() => switchView("groups")}
           />
         )}
@@ -2112,84 +2448,206 @@ function Flag({ team, className = "" }: { team: Team; className?: string }) {
   return <span className={`official-flag ${className}`}><img src={flagUrl(team.code)} alt={`${team.name} flag`} /></span>;
 }
 
+function PredictionAccuracyPanel({ accuracy }: { accuracy: PredictionAccuracy }) {
+  return (
+    <aside className="prediction-accuracy-panel" aria-label="Prediction accuracy tracker">
+      <div className="accuracy-score-card">
+        <span>Prediction accuracy</span>
+        <strong>{accuracy.completed ? `${accuracy.percentage}%` : "--"}</strong>
+        <em>{accuracy.completed ? `${accuracy.correct}/${accuracy.completed} completed picks correct` : "Starts after knockout results"}</em>
+      </div>
+      <div className="accuracy-round-list">
+        {accuracy.rounds.map((round) => (
+          <div className="accuracy-round-row" key={round.key}>
+            <span>{round.label}</span>
+            <strong>{round.completed ? `${round.correct}/${round.completed}` : `0/${round.total}`}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="accuracy-final-row">
+        <Trophy size={15} />
+        <span>Final winner correct:</span>
+        <strong>{accuracy.finalCorrect === null ? "Pending" : accuracy.finalCorrect ? "Yes" : "No"}</strong>
+      </div>
+    </aside>
+  );
+}
+
 function KnockoutStage({
   roundOf32,
+  mode,
   picks,
+  predictionPicks,
+  officialPicks,
+  accuracy,
   champion,
+  knockoutFixtures,
+  onModeChange,
   onPick,
   onAutoPick,
   autoPickActive,
-  onReset,
+  onResetMatchToOfficial,
+  onResetRoundToOfficial,
+  onResetToOfficial,
+  onClearPredictions,
   onBack
 }: {
   roundOf32: Map<number, OfficialMatch>;
+  mode: BracketMode;
   picks: BracketPicks;
+  predictionPicks: BracketPicks;
+  officialPicks: BracketPicks;
+  accuracy: PredictionAccuracy;
   champion?: Team;
+  knockoutFixtures: KnockoutFixture[];
+  onModeChange: (mode: BracketMode) => void;
   onPick: (matchNumber: number, teamName: string) => void;
   onAutoPick: () => void;
   autoPickActive: boolean;
-  onReset: () => void;
+  onResetMatchToOfficial: (matchNumber: number) => void;
+  onResetRoundToOfficial: (roundKey: BracketRoundKey) => void;
+  onResetToOfficial: () => void;
+  onClearPredictions: () => void;
   onBack: () => void;
 }) {
+  const officialCompletedCount = Object.values(officialPicks).filter(Boolean).length;
+  const isPredictionMode = mode === "prediction";
+
   return (
-    <section className="content-section official-knockout-section">
+    <section className="content-section official-knockout-section dual-bracket-section">
       <header className="section-heading bracket-heading">
         <div>
-          <span className="eyebrow">OFFICIAL FIFA PATH · M73–M104</span>
-          <h2>Knockout bracket</h2>
+          <span className="eyebrow">DUAL BRACKET MODE � M73-M104</span>
+          <h2>{isPredictionMode ? "My prediction bracket" : "Official bracket"}</h2>
           <p>
-            Auto-pick preserves manual choices, repeats the same result for the same matchups, and recalculates only paths affected by a changed pick.
+            {isPredictionMode
+              ? "Make private what-if picks without changing official results. Completed matches can be reset back to the official winner anytime."
+              : "This view advances teams only from completed official knockout results. Upcoming and live matches stay unpicked until full-time."}
           </p>
         </div>
-        <div className="bracket-tools">
+        <div className="bracket-tools dual-bracket-tools">
           <button className="secondary-button" onClick={onBack} type="button"><ArrowLeft size={17} /> Predictor</button>
-          <button
-            className={`secondary-button accent ${autoPickActive ? "undo-auto-picks" : ""}`}
-            onClick={onAutoPick}
-            title={autoPickActive ? "Restore your bracket to the point before auto-pick" : "Predict remaining matches from live form and FIFA ranking"}
-            type="button"
-          >
-            {autoPickActive ? <RotateCcw size={17} /> : <Sparkles size={17} />}
-            {autoPickActive ? "Undo auto-picks" : "Auto-pick remaining"}
-          </button>
-          <button className="secondary-button" onClick={onReset} type="button"><RotateCcw size={17} /> Reset</button>
+          <div className="dual-mode-switch" role="tablist" aria-label="Bracket mode">
+            <button
+              aria-selected={mode === "official"}
+              className={mode === "official" ? "active" : ""}
+              onClick={() => onModeChange("official")}
+              role="tab"
+              type="button"
+            >
+              Official Bracket
+            </button>
+            <button
+              aria-selected={mode === "prediction"}
+              className={mode === "prediction" ? "active" : ""}
+              onClick={() => onModeChange("prediction")}
+              role="tab"
+              type="button"
+            >
+              My Prediction
+            </button>
+          </div>
+          {isPredictionMode && (
+            <>
+              <button
+                className={`secondary-button accent ${autoPickActive ? "undo-auto-picks" : ""}`}
+                onClick={onAutoPick}
+                title={autoPickActive ? "Restore your bracket to the point before auto-pick" : "Predict remaining matches from live form and FIFA ranking"}
+                type="button"
+              >
+                {autoPickActive ? <RotateCcw size={17} /> : <Sparkles size={17} />}
+                {autoPickActive ? "Undo auto-picks" : "Auto-pick remaining"}
+              </button>
+              <select
+                aria-label="Reset a round to official results"
+                className="round-reset-select"
+                defaultValue=""
+                onChange={(event) => {
+                  const roundKey = event.currentTarget.value as BracketRoundKey;
+                  if (roundKey) onResetRoundToOfficial(roundKey);
+                  event.currentTarget.value = "";
+                }}
+              >
+                <option value="">Reset round</option>
+                {bracketRoundDefinitions.map((round) => (
+                  <option key={round.key} value={round.key}>{round.label}</option>
+                ))}
+              </select>
+              <button className="secondary-button" onClick={onResetToOfficial} type="button"><Check size={17} /> Reset to official</button>
+              <button className="secondary-button" onClick={onClearPredictions} type="button"><RotateCcw size={17} /> Clear predictions</button>
+            </>
+          )}
         </div>
       </header>
 
+      <div className="dual-bracket-summary-grid">
+        <article className="dual-summary-card official-sync-card">
+          <span>Official sync</span>
+          <strong>{officialCompletedCount} completed knockout picks</strong>
+          <p>Official winners are applied only after a match is completed/full-time. Penalty winners count as match winners.</p>
+        </article>
+        <article className="dual-summary-card what-if-card">
+          <span>What-if mode</span>
+          <strong>{Object.values(predictionPicks).filter(Boolean).length} user picks saved</strong>
+          <p>Your prediction bracket is private and can disagree with the real result without changing the official bracket.</p>
+        </article>
+        <PredictionAccuracyPanel accuracy={accuracy} />
+      </div>
+
       {champion && (
-        <article className="compact-champion-banner">
+        <article className={`compact-champion-banner ${mode === "official" ? "official-champion" : "prediction-champion"}`}>
           <Trophy size={28} />
-          <span>Your champion</span>
+          <span>{mode === "official" ? "Official champion" : "Your champion"}</span>
           <strong><Flag team={champion} /> {champion.name}</strong>
         </article>
       )}
 
-      <div className="official-bracket-shell" aria-label="FIFA World Cup 2026 knockout bracket">
-        <CompactRound title="Round of 32" numbers={leftBracketMatches.round32} roundOf32={roundOf32} picks={picks} onPick={onPick} side="left" />
-        <CompactRound title="Round of 16" numbers={leftBracketMatches.round16} roundOf32={roundOf32} picks={picks} onPick={onPick} side="left" />
-        <CompactRound title="Quarter-final" numbers={leftBracketMatches.quarterFinals} roundOf32={roundOf32} picks={picks} onPick={onPick} side="left" />
-        <CompactRound title="Semi-final" numbers={leftBracketMatches.semiFinals} roundOf32={roundOf32} picks={picks} onPick={onPick} side="left" />
+      <div className={`official-bracket-shell dual-bracket-shell ${mode === "official" ? "official-mode" : "prediction-mode"}`} aria-label="FIFA World Cup 2026 knockout bracket">
+        <CompactRound title="Round of 32" numbers={leftBracketMatches.round32} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="left" />
+        <CompactRound title="Round of 16" numbers={leftBracketMatches.round16} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="left" />
+        <CompactRound title="Quarter-final" numbers={leftBracketMatches.quarterFinals} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="left" />
+        <CompactRound title="Semi-final" numbers={leftBracketMatches.semiFinals} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="left" />
 
         <section className="bracket-centre-column">
           <header>Finals</header>
           <div className="centre-final">
-            <OfficialMatchCard match={resolveOfficialMatch(104, roundOf32, picks)} selected={picks.m104} onPick={onPick} featured />
+            <OfficialMatchCard
+              match={resolveOfficialMatch(104, roundOf32, picks)}
+              selected={picks.m104}
+              predictionSelected={predictionPicks.m104}
+              officialSelected={officialPicks.m104}
+              fixture={getKnockoutFixtureForMatch(104, knockoutFixtures, roundOf32, officialPicks)}
+              mode={mode}
+              onPick={onPick}
+              onResetToOfficial={onResetMatchToOfficial}
+              featured
+            />
           </div>
           <div className="centre-third-place">
             <span>Play-off for third place</span>
-            <OfficialMatchCard match={resolveOfficialMatch(103, roundOf32, picks)} selected={picks.m103} onPick={onPick} />
+            <OfficialMatchCard
+              match={resolveOfficialMatch(103, roundOf32, picks)}
+              selected={picks.m103}
+              predictionSelected={predictionPicks.m103}
+              officialSelected={officialPicks.m103}
+              fixture={getKnockoutFixtureForMatch(103, knockoutFixtures, roundOf32, officialPicks)}
+              mode={mode}
+              onPick={onPick}
+              onResetToOfficial={onResetMatchToOfficial}
+            />
           </div>
         </section>
 
-        <CompactRound title="Semi-final" numbers={rightBracketMatches.semiFinals} roundOf32={roundOf32} picks={picks} onPick={onPick} side="right" />
-        <CompactRound title="Quarter-final" numbers={rightBracketMatches.quarterFinals} roundOf32={roundOf32} picks={picks} onPick={onPick} side="right" />
-        <CompactRound title="Round of 16" numbers={rightBracketMatches.round16} roundOf32={roundOf32} picks={picks} onPick={onPick} side="right" />
-        <CompactRound title="Round of 32" numbers={rightBracketMatches.round32} roundOf32={roundOf32} picks={picks} onPick={onPick} side="right" />
+        <CompactRound title="Semi-final" numbers={rightBracketMatches.semiFinals} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="right" />
+        <CompactRound title="Quarter-final" numbers={rightBracketMatches.quarterFinals} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="right" />
+        <CompactRound title="Round of 16" numbers={rightBracketMatches.round16} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="right" />
+        <CompactRound title="Round of 32" numbers={rightBracketMatches.round32} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="right" />
       </div>
 
       <p className="official-bracket-note">
         Third-place opponents are assigned from the exact eight qualifying groups using the
         <a href={fifaRegulationsUrl} target="_blank" rel="noreferrer"> FIFA World Cup 2026 Regulations, Annex C</a>.
+        Official winners and user predictions are stored separately.
       </p>
     </section>
   );
@@ -2200,14 +2658,24 @@ function CompactRound({
   numbers,
   roundOf32,
   picks,
+  predictionPicks,
+  officialPicks,
+  knockoutFixtures,
+  mode,
   onPick,
+  onResetMatchToOfficial,
   side
 }: {
   title: string;
   numbers: number[];
   roundOf32: Map<number, OfficialMatch>;
   picks: BracketPicks;
+  predictionPicks: BracketPicks;
+  officialPicks: BracketPicks;
+  knockoutFixtures: KnockoutFixture[];
+  mode: BracketMode;
   onPick: (matchNumber: number, teamName: string) => void;
+  onResetMatchToOfficial: (matchNumber: number) => void;
   side: "left" | "right";
 }) {
   return (
@@ -2219,7 +2687,12 @@ function CompactRound({
             key={matchNumber}
             match={resolveOfficialMatch(matchNumber, roundOf32, picks)}
             selected={picks[`m${matchNumber}`]}
+            predictionSelected={predictionPicks[`m${matchNumber}`]}
+            officialSelected={officialPicks[`m${matchNumber}`]}
+            fixture={getKnockoutFixtureForMatch(matchNumber, knockoutFixtures, roundOf32, officialPicks)}
+            mode={mode}
             onPick={onPick}
+            onResetToOfficial={onResetMatchToOfficial}
           />
         ))}
       </div>
@@ -2230,24 +2703,56 @@ function CompactRound({
 function OfficialMatchCard({
   match,
   selected,
+  predictionSelected,
+  officialSelected,
+  fixture,
+  mode,
   onPick,
+  onResetToOfficial,
   featured = false
 }: {
   match: OfficialMatch;
   selected?: string;
+  predictionSelected?: string;
+  officialSelected?: string;
+  fixture?: KnockoutFixture;
+  mode: BracketMode;
   onPick: (matchNumber: number, teamName: string) => void;
+  onResetToOfficial: (matchNumber: number) => void;
   featured?: boolean;
 }) {
   const isRoundOf32 = match.number >= 73 && match.number <= 88;
+  const statusLabel = getFixtureStatusLabel(fixture);
+  const statusClass = fixture?.status ?? "scheduled";
+  const readOnly = mode === "official";
+  const canResetToOfficial = mode === "prediction" && Boolean(officialSelected) && predictionSelected !== officialSelected;
+  const officialWinner = officialSelected ? findTeam(officialSelected) : undefined;
 
   return (
-    <article className={`official-match-card ${selected ? "decided" : ""} ${featured ? "featured" : ""}`}>
-      <span className="official-match-number">M{match.number}</span>
-      {match.teams.map((team, index) =>
-        team ? (
+    <article className={`official-match-card ${selected ? "decided" : ""} ${featured ? "featured" : ""} ${readOnly ? "read-only" : ""}`}>
+      <span className="official-match-number">
+        <span>M{match.number}</span>
+        <span className={`match-status-pill ${statusClass}`}>{statusLabel}</span>
+      </span>
+      {match.teams.map((team, index) => {
+        const isSelected = selected === team?.name;
+        const isOfficialWinner = officialSelected === team?.name;
+        const isUserPick = predictionSelected === team?.name;
+        const isOverridden = mode === "prediction" && isUserPick && Boolean(officialSelected) && predictionSelected !== officialSelected;
+        const buttonClass = [
+          isSelected ? "winner" : selected ? "loser" : "",
+          isOfficialWinner ? "official-winner" : "",
+          isUserPick ? "user-pick" : "",
+          isOverridden ? "overridden-pick" : "",
+          isRoundOf32 ? "round32-team-row" : "",
+          readOnly ? "read-only" : ""
+        ].filter(Boolean).join(" ");
+
+        return team ? (
           <button
-            aria-pressed={selected === team.name}
-            className={`${selected === team.name ? "winner" : selected ? "loser" : ""} ${isRoundOf32 ? "round32-team-row" : ""}`}
+            aria-pressed={isSelected}
+            className={buttonClass}
+            disabled={readOnly}
             key={`${match.number}-${team.name}`}
             onClick={() => onPick(match.number, team.name)}
             type="button"
@@ -2267,18 +2772,32 @@ function OfficialMatchCard({
                 <span className="official-team-name">{team.name}</span>
               </>
             )}
-            <span className="winner-check">{selected === team.name && <Check size={11} />}</span>
+            <span className="winner-check marker-stack">
+              {isOfficialWinner && <span className="official-winner-marker" title="Official winner"><Check size={9} /></span>}
+              {mode === "prediction" && isUserPick && <span className={`user-pick-marker ${isOverridden ? "overridden" : ""}`} title={isOverridden ? "Overridden user pick" : "User pick"}>{isOverridden ? "!" : "P"}</span>}
+            </span>
           </button>
         ) : (
           <div className={`official-team-placeholder ${isRoundOf32 ? "round32-placeholder" : ""}`} key={`${match.number}-${index}`}>
             <span>{isRoundOf32 ? formatRoundOf32Slot(match.labels[index]) : match.labels[index]}</span>
-            <em>Awaiting winner</em>
+            <em>Team not confirmed</em>
           </div>
-        )
+        );
+      })}
+      {mode === "prediction" && officialWinner && (
+        <div className="match-override-footer">
+          <span className="official-winner-text">Official: {officialWinner.name}</span>
+          {predictionSelected && predictionSelected !== officialSelected && <span className="overridden-text">Overridden</span>}
+          {predictionSelected === officialSelected && <span className="aligned-text">Aligned</span>}
+          {canResetToOfficial && (
+            <button onClick={() => onResetToOfficial(match.number)} type="button">Reset this match</button>
+          )}
+        </div>
       )}
     </article>
   );
 }
+
 function formatRoundOf32Slot(label: string) {
   const position = label.charAt(0);
   const group = label.slice(1);
