@@ -506,6 +506,13 @@ const rightBracketMatches = {
   semiFinals: [102]
 };
 
+const horizontalBracketMatches = {
+  round32: [...leftBracketMatches.round32, ...rightBracketMatches.round32],
+  round16: [...leftBracketMatches.round16, ...rightBracketMatches.round16],
+  quarterFinals: [...leftBracketMatches.quarterFinals, ...rightBracketMatches.quarterFinals],
+  semiFinals: [...leftBracketMatches.semiFinals, ...rightBracketMatches.semiFinals]
+};
+
 function buildRoundOf32(groupOrder: GroupOrder, thirdOrder: string[]) {
   const position = (groupId: string, index: number) => findTeam(groupOrder[groupId][index]);
   const thirdByGroup = Object.fromEntries(
@@ -1901,27 +1908,21 @@ function KnockoutStage({
         </article>
       )}
 
-      <div className="official-bracket-shell" aria-label="FIFA World Cup 2026 knockout bracket">
-        <CompactRound title="Round of 32" numbers={leftBracketMatches.round32} roundOf32={roundOf32} picks={picks} onPick={onPick} side="left" />
-        <CompactRound title="Round of 16" numbers={leftBracketMatches.round16} roundOf32={roundOf32} picks={picks} onPick={onPick} side="left" />
-        <CompactRound title="Quarter-final" numbers={leftBracketMatches.quarterFinals} roundOf32={roundOf32} picks={picks} onPick={onPick} side="left" />
-        <CompactRound title="Semi-final" numbers={leftBracketMatches.semiFinals} roundOf32={roundOf32} picks={picks} onPick={onPick} side="left" />
+      <div className="official-bracket-shell horizontal-bracket-shell" aria-label="FIFA World Cup 2026 knockout bracket">
+        <CompactRound title="R32" subtitle="Round of 32" numbers={horizontalBracketMatches.round32} roundOf32={roundOf32} picks={picks} onPick={onPick} />
+        <CompactRound title="R16" subtitle="Round of 16" numbers={horizontalBracketMatches.round16} roundOf32={roundOf32} picks={picks} onPick={onPick} />
+        <CompactRound title="QF" subtitle="Quarter-final" numbers={horizontalBracketMatches.quarterFinals} roundOf32={roundOf32} picks={picks} onPick={onPick} />
+        <CompactRound title="SF" subtitle="Semi-final" numbers={horizontalBracketMatches.semiFinals} roundOf32={roundOf32} picks={picks} onPick={onPick} />
 
-        <section className="bracket-centre-column">
-          <header>Finals</header>
+        <section className="bracket-centre-column horizontal-final-column">
+          <header>
+            <strong>Final</strong>
+            <span>Champion path</span>
+          </header>
           <div className="centre-final">
             <OfficialMatchCard match={resolveOfficialMatch(104, roundOf32, picks)} selected={picks.m104} onPick={onPick} featured />
           </div>
-          <div className="centre-third-place">
-            <span>Play-off for third place</span>
-            <OfficialMatchCard match={resolveOfficialMatch(103, roundOf32, picks)} selected={picks.m103} onPick={onPick} />
-          </div>
         </section>
-
-        <CompactRound title="Semi-final" numbers={rightBracketMatches.semiFinals} roundOf32={roundOf32} picks={picks} onPick={onPick} side="right" />
-        <CompactRound title="Quarter-final" numbers={rightBracketMatches.quarterFinals} roundOf32={roundOf32} picks={picks} onPick={onPick} side="right" />
-        <CompactRound title="Round of 16" numbers={rightBracketMatches.round16} roundOf32={roundOf32} picks={picks} onPick={onPick} side="right" />
-        <CompactRound title="Round of 32" numbers={rightBracketMatches.round32} roundOf32={roundOf32} picks={picks} onPick={onPick} side="right" />
       </div>
 
       <p className="official-bracket-note">
@@ -1934,23 +1935,38 @@ function KnockoutStage({
 
 function CompactRound({
   title,
+  subtitle,
   numbers,
   roundOf32,
   picks,
-  onPick,
-  side
+  onPick
 }: {
   title: string;
+  subtitle?: string;
   numbers: number[];
   roundOf32: Map<number, OfficialMatch>;
   picks: BracketPicks;
   onPick: (matchNumber: number, teamName: string) => void;
-  side: "left" | "right";
 }) {
   return (
-    <section className={`compact-round compact-round-${side} compact-round-${numbers.length}`}>
-      <header>{title}</header>
+    <section className={`compact-round compact-round-flow compact-round-${numbers.length}`}>
+      <header>
+        <strong>{title}</strong>
+        {subtitle && <span>{subtitle}</span>}
+      </header>
       <div className="compact-round-matches">
+        {numbers.length > 1 && (
+          <div className={`round-connectors round-connectors-${numbers.length}`} aria-hidden="true">
+            {Array.from({ length: numbers.length / 2 }, (_, index) => (
+              <span className="round-connector" key={index}>
+                <span className="connector-top" />
+                <span className="connector-bottom" />
+                <span className="connector-vertical" />
+                <span className="connector-middle" />
+              </span>
+            ))}
+          </div>
+        )}
         {numbers.map((matchNumber) => (
           <OfficialMatchCard
             key={matchNumber}
@@ -1976,46 +1992,53 @@ function OfficialMatchCard({
   featured?: boolean;
 }) {
   const isRoundOf32 = match.number >= 73 && match.number <= 88;
+  const roundLabel = getKnockoutRoundLabel(match.number);
 
   return (
     <article className={`official-match-card ${selected ? "decided" : ""} ${featured ? "featured" : ""}`}>
-      <span className="official-match-number">M{match.number}</span>
-      {match.teams.map((team, index) =>
-        team ? (
+      <span className="official-match-number">
+        <strong>M{match.number}</strong>
+        <em>{roundLabel}</em>
+      </span>
+      {match.teams.map((team, index) => {
+        const sourceLabel = isRoundOf32 ? formatRoundOf32Slot(match.labels[index]) : match.labels[index];
+        return team ? (
           <button
+            aria-label={`${team.name}, ${sourceLabel}`}
             aria-pressed={selected === team.name}
             className={`${selected === team.name ? "winner" : selected ? "loser" : ""} ${isRoundOf32 ? "round32-team-row" : ""}`}
             key={`${match.number}-${team.name}`}
             onClick={() => onPick(match.number, team.name)}
+            title={`${team.name} · ${sourceLabel}`}
             type="button"
           >
-            {isRoundOf32 ? (
-              <>
-                <Flag team={team} />
-                <span className="official-team-details">
-                  <span className="official-team-name">{team.name}</span>
-                  <span className="round32-source-label">{formatRoundOf32Slot(match.labels[index])}</span>
-                </span>
-              </>
-            ) : (
-              <>
-                <span className="official-slot-label">{match.labels[index]}</span>
-                <Flag team={team} />
-                <span className="official-team-name">{team.name}</span>
-              </>
-            )}
+            <span className="official-team-identity">
+              <Flag team={team} />
+              <span className="official-team-code">{team.code}</span>
+            </span>
+            <span className="round32-source-label">{sourceLabel}</span>
             <span className="winner-check">{selected === team.name && <Check size={11} />}</span>
           </button>
         ) : (
           <div className={`official-team-placeholder ${isRoundOf32 ? "round32-placeholder" : ""}`} key={`${match.number}-${index}`}>
-            <span>{isRoundOf32 ? formatRoundOf32Slot(match.labels[index]) : match.labels[index]}</span>
+            <span>{sourceLabel}</span>
             <em>Awaiting winner</em>
           </div>
-        )
-      )}
+        );
+      })}
     </article>
   );
 }
+
+function getKnockoutRoundLabel(matchNumber: number) {
+  if (matchNumber >= 73 && matchNumber <= 88) return "Round of 32";
+  if (matchNumber >= 89 && matchNumber <= 96) return "Round of 16";
+  if (matchNumber >= 97 && matchNumber <= 100) return "Quarter-final";
+  if (matchNumber >= 101 && matchNumber <= 102) return "Semi-final";
+  if (matchNumber === 103) return "Third-place";
+  return "Final";
+}
+
 function formatRoundOf32Slot(label: string) {
   const position = label.charAt(0);
   const group = label.slice(1);
