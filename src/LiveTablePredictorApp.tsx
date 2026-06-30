@@ -59,6 +59,29 @@ type GroupOrder = Record<string, string[]>;
 type StatsMap = Record<string, TeamStats>;
 type RankingMap = Record<string, PredictionRanking>;
 type BracketPicks = Record<string, string>;
+type PredictionPath = {
+  id: string;
+  name: string;
+  picks: BracketPicks;
+  createdAt: string;
+  updatedAt: string;
+};
+type BracketMode = "official" | "prediction";
+type BracketRoundKey = "round32" | "round16" | "quarterFinals" | "semiFinals" | "final";
+type AccuracyRoundSummary = {
+  key: BracketRoundKey;
+  label: string;
+  correct: number;
+  completed: number;
+  total: number;
+};
+type PredictionAccuracy = {
+  rounds: AccuracyRoundSummary[];
+  correct: number;
+  completed: number;
+  percentage: number;
+  finalCorrect: boolean | null;
+};
 type AutoPickCache = {
   baseline: BracketPicks;
   generated: BracketPicks;
@@ -66,15 +89,48 @@ type AutoPickCache = {
 type View = "groups" | "bracket";
 type FeedState = "loading" | "live" | "cached" | "error";
 
+type FifaTeamSide = {
+  Score?: number | null;
+  IdTeam?: string;
+  IdCountry?: string;
+  Abbreviation?: string;
+  TeamName?: Array<{ Description?: string }>;
+};
+
 type FifaMatchResult = {
   IdMatch: string;
-  StartTime: string;
-  Result: number;
-  IdGroup: string;
+  StartTime?: string;
+  Date?: string;
+  LocalDate?: string;
+  Result?: number;
+  ResultType?: number | null;
+  MatchStatus?: number | string | null;
+  OfficialityStatus?: number | null;
+  IdCompetition?: string;
+  IdSeason?: string;
+  IdStage?: string;
+  IdGroup?: string | null;
+  Home?: FifaTeamSide | null;
+  Away?: FifaTeamSide | null;
   HomeTeamScore: number | null;
   AwayTeamScore: number | null;
   HomeTeamId: string;
   AwayTeamId: string;
+  MatchNumber?: number | string;
+  MatchNo?: number | string;
+  MatchCode?: string;
+  Description?: string;
+  PlaceHolderA?: string;
+  PlaceHolderB?: string;
+  StageName?: Array<{ Description?: string }>;
+  GroupName?: Array<{ Description?: string }>;
+  HomeTeamPenaltyScore?: number | null;
+  AwayTeamPenaltyScore?: number | null;
+  HomeTeamPenalty?: number | null;
+  AwayTeamPenalty?: number | null;
+  Winner?: string | null;
+  WinnerTeamId?: string;
+  WinningTeamId?: string;
 };
 
 type FifaRanking = {
@@ -110,8 +166,30 @@ type GroupFixture = {
   homeScore: number | null;
   awayScore: number | null;
   completed: boolean;
+  live: boolean;
+  status: FixtureStatus;
+  resultStatus: number;
 };
 
+type KnockoutFixture = {
+  id: string;
+  number?: number;
+  kickoff: string;
+  homeCode: string;
+  awayCode: string;
+  homeScore: number | null;
+  awayScore: number | null;
+  homePenaltyScore: number | null;
+  awayPenaltyScore: number | null;
+  labels?: [string, string];
+  completed: boolean;
+  live: boolean;
+  status: FixtureStatus;
+  resultStatus: number;
+  winnerCode?: string;
+};
+
+type FixtureStatus = "scheduled" | "live" | "completed";
 type ScorePrediction = { home: number; away: number };
 type ScorePredictions = Record<string, ScorePrediction>;
 
@@ -121,6 +199,8 @@ const fifaRegulationsUrl =
   "https://digitalhub.fifa.com/m/636f5c9c6f29771f/original/FWC2026_regulations_EN.pdf";
 const fifaStandingsApi =
   "https://api.fifa.com/api/v3/calendar/17/285023/289273/standing?language=en&count=500";
+const fifaMatchesApi =
+  "https://api.fifa.com/api/v3/calendar/matches?idCompetition=17&idSeason=285023&language=en&count=500";
 const fifaRankingsApi =
   "https://api.fifa.com/api/v3/fifarankings/rankings/live?gender=1&sportType=0&language=en";
 const flagUrl = (code: string) =>
@@ -211,6 +291,82 @@ function loadBracketPicks(): BracketPicks {
   }
 }
 
+function createPredictionPathId() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `prediction-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeBracketPicks(value: unknown): BracketPicks {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(([key, teamName]) =>
+      /^m\d+$/.test(key) && typeof teamName === "string" && teamName.trim()
+    )
+  ) as BracketPicks;
+}
+
+function createPredictionPathRecord(name: string, picks: BracketPicks = {}): PredictionPath {
+  const now = new Date().toISOString();
+  return {
+    id: createPredictionPathId(),
+    name,
+    picks,
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+function normalizePredictionPath(value: unknown, index: number): PredictionPath | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const now = new Date().toISOString();
+  const name = typeof raw.name === "string" && raw.name.trim() ? raw.name : `Prediction ${index + 1}`;
+  return {
+    id: typeof raw.id === "string" && raw.id ? raw.id : createPredictionPathId(),
+    name,
+    picks: normalizeBracketPicks(raw.picks),
+    createdAt: typeof raw.createdAt === "string" ? raw.createdAt : now,
+    updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : now
+  };
+}
+
+function loadPredictionPaths(): PredictionPath[] {
+  try {
+    const saved = window.localStorage.getItem("fifa-prediction-paths-v1");
+    if (saved) {
+      const parsed = JSON.parse(saved) as unknown;
+      if (Array.isArray(parsed)) {
+        const paths = parsed
+          .map((path, index) => normalizePredictionPath(path, index))
+          .filter((path): path is PredictionPath => Boolean(path));
+        if (paths.length > 0) return paths;
+      }
+    }
+  } catch {
+    // Fall back to the legacy single-bracket storage below.
+  }
+
+  return [createPredictionPathRecord("Prediction 1", loadBracketPicks())];
+}
+
+function loadActivePredictionPathId(paths: PredictionPath[]) {
+  try {
+    const saved = window.localStorage.getItem("fifa-active-prediction-path-v1");
+    return saved && paths.some((path) => path.id === saved) ? saved : paths[0]?.id ?? "";
+  } catch {
+    return paths[0]?.id ?? "";
+  }
+}
+
+function loadBracketMode(): BracketMode {
+  try {
+    return window.localStorage.getItem("fifa-dual-bracket-mode-v1") === "official" ? "official" : "prediction";
+  } catch {
+    return "prediction";
+  }
+}
+
 function loadAutoPickSnapshot(): BracketPicks | null {
   try {
     const saved = window.localStorage.getItem("fifa-auto-pick-snapshot-v1");
@@ -261,6 +417,14 @@ function loadCachedFixtures(): GroupFixture[] {
   }
 }
 
+function loadCachedKnockoutFixtures(): KnockoutFixture[] {
+  try {
+    return JSON.parse(window.localStorage.getItem("fifa-knockout-fixtures-cache-v1") ?? "[]");
+  } catch {
+    return [];
+  }
+}
+
 function loadScorePredictions(): ScorePredictions {
   try {
     return JSON.parse(window.localStorage.getItem("fifa-score-predictions-v1") ?? "{}");
@@ -277,6 +441,232 @@ function loadManualSimulationMode() {
   }
 }
 
+const liveMatchWindowMs = 4 * 60 * 60 * 1000;
+
+function getMatchKickoff(match: FifaMatchResult) {
+  return match.StartTime ?? match.Date ?? match.LocalDate ?? "";
+}
+
+function getMatchScore(match: FifaMatchResult, side: "Home" | "Away") {
+  const score = side === "Home" ? match.HomeTeamScore : match.AwayTeamScore;
+  return typeof score === "number" ? score : match[side]?.Score ?? null;
+}
+
+function getCalendarTeamCode(team?: FifaTeamSide | null) {
+  return normalizeTeamCode(team?.IdCountry ?? team?.Abbreviation);
+}
+
+function getFixtureLifecycle(match: FifaMatchResult, hasScore: boolean, now = Date.now()) {
+  const kickoffTime = new Date(getMatchKickoff(match)).getTime();
+  const hasValidKickoff = Number.isFinite(kickoffTime);
+  const resultStatus = Number(match.Result ?? match.ResultType ?? 0);
+  const matchStatus = Number(match.MatchStatus ?? 0);
+  const isOfficialResult = Number(match.OfficialityStatus ?? 0) > 0;
+  const hasWinner = Boolean(match.Winner ?? match.WinnerTeamId ?? match.WinningTeamId);
+  const isFinalResult = resultStatus >= 4 || match.ResultType === 1 || isOfficialResult || hasWinner;
+  const hasKickedOff = hasValidKickoff && kickoffTime <= now;
+  const isInsideLiveWindow = hasKickedOff && now - kickoffTime <= liveMatchWindowMs;
+  const statusLooksLive = (resultStatus > 0 && resultStatus < 4) || matchStatus > 1;
+  const live = !isFinalResult && (statusLooksLive || isInsideLiveWindow);
+  const completed = hasScore && (isFinalResult || (hasKickedOff && !live));
+  const status: FixtureStatus = completed ? "completed" : live ? "live" : "scheduled";
+
+  return { completed, live, status, resultStatus };
+}
+
+function normalizeTeamCode(value?: string) {
+  const code = value?.trim().toUpperCase();
+  return code && allTeams.some((team) => team.code === code) ? code : undefined;
+}
+
+function readStringField(raw: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = raw[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return undefined;
+}
+
+function readNumberField(raw: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = raw[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  }
+  return undefined;
+}
+
+function inferKnockoutMatchNumber(match: FifaMatchResult) {
+  const raw = match as FifaMatchResult & Record<string, unknown>;
+  const directNumber = readNumberField(raw, ["MatchNumber", "MatchNo", "MatchNoLong", "MatchIndex", "Order"]);
+  if (directNumber && officialPickOrder.includes(directNumber)) return directNumber;
+
+  const text = [match.MatchNumber, match.MatchNo, match.MatchCode, match.Description, match.IdMatch]
+    .filter((value): value is string | number => typeof value === "string" || typeof value === "number")
+    .map(String)
+    .join(" ");
+  const matchNumber = text.match(/(?:^|[^0-9])(?:M)?(7[3-9]|8[0-9]|9[0-9]|10[0-4])(?:[^0-9]|$)/i)?.[1];
+  const parsed = matchNumber ? Number(matchNumber) : undefined;
+  return parsed && officialPickOrder.includes(parsed) ? parsed : undefined;
+}
+
+function getResultTeamCode(match: FifaMatchResult, side: "Home" | "Away", teamCodeById: Record<string, string>) {
+  const raw = match as FifaMatchResult & Record<string, unknown>;
+  const team = match[side];
+  const id = side === "Home" ? match.HomeTeamId : match.AwayTeamId;
+  const idFromFlexibleField = readStringField(raw, [`${side}TeamId`, `Id${side}Team`, `${side}IdTeam`]) ?? team?.IdTeam;
+  const fromId = teamCodeById[id] ?? (idFromFlexibleField ? teamCodeById[idFromFlexibleField] : undefined);
+  const direct = readStringField(raw, [
+    `${side}TeamCountryCode`,
+    `${side}CountryCode`,
+    `${side}TeamCode`,
+    `${side}TeamAbbreviation`,
+    `${side}TeamIdCountry`,
+    `IdCountry${side}`
+  ]);
+  return normalizeTeamCode(fromId ?? direct) ?? getCalendarTeamCode(team);
+}
+
+function getPenaltyScore(match: FifaMatchResult, side: "Home" | "Away") {
+  const raw = match as FifaMatchResult & Record<string, unknown>;
+  return readNumberField(raw, [
+    `${side}TeamPenaltyScore`,
+    `${side}TeamPenalty`,
+    `${side}PenaltyScore`,
+    `${side}TeamPenaltyShootoutScore`
+  ]) ?? null;
+}
+
+function getCompletedWinnerCode(
+  match: FifaMatchResult,
+  teamCodeById: Record<string, string>,
+  homeCode: string,
+  awayCode: string,
+  homePenaltyScore: number | null,
+  awayPenaltyScore: number | null
+) {
+  const raw = match as FifaMatchResult & Record<string, unknown>;
+  const winnerId = match.Winner ?? match.WinnerTeamId ?? match.WinningTeamId ?? readStringField(raw, ["Winner", "WinnerIdTeam", "WinningTeamId", "WinnerTeamId"]);
+  const winnerCode = normalizeTeamCode(winnerId ? teamCodeById[winnerId] ?? winnerId : undefined);
+  if (winnerCode) return winnerCode;
+
+  const homeScore = getMatchScore(match, "Home");
+  const awayScore = getMatchScore(match, "Away");
+  if (homeScore !== null && awayScore !== null) {
+    if (homeScore > awayScore) return homeCode;
+    if (awayScore > homeScore) return awayCode;
+  }
+
+  if (homePenaltyScore !== null && awayPenaltyScore !== null) {
+    if (homePenaltyScore > awayPenaltyScore) return homeCode;
+    if (awayPenaltyScore > homePenaltyScore) return awayCode;
+  }
+
+  return undefined;
+}
+
+function parseFifaKnockoutFixtures(rows: FifaStanding[]) {
+  const teamCodeById = Object.fromEntries(
+    rows.flatMap((row) => row.Team?.IdTeam && row.Team.IdCountry ? [[row.Team.IdTeam, row.Team.IdCountry]] : [])
+  ) as Record<string, string>;
+  const fixtures = new Map<string, KnockoutFixture>();
+
+  rows.forEach((row) => {
+    const groupDescription = row.Group?.[0]?.Description ?? "";
+    const looksLikeGroupStage = /^Group [A-L]$/i.test(groupDescription.trim());
+    row.MatchResults?.forEach((match) => {
+      const matchNumber = inferKnockoutMatchNumber(match);
+      if (!matchNumber && looksLikeGroupStage) return;
+      if (matchNumber && !officialPickOrder.includes(matchNumber)) return;
+      if (fixtures.has(match.IdMatch)) return;
+
+      const homeCode = getResultTeamCode(match, "Home", teamCodeById);
+      const awayCode = getResultTeamCode(match, "Away", teamCodeById);
+      if (!homeCode || !awayCode) return;
+
+      const homeScore = getMatchScore(match, "Home");
+      const awayScore = getMatchScore(match, "Away");
+      const hasScore = homeScore !== null && awayScore !== null;
+      const lifecycle = getFixtureLifecycle(match, hasScore);
+      const homePenaltyScore = getPenaltyScore(match, "Home");
+      const awayPenaltyScore = getPenaltyScore(match, "Away");
+      const winnerCode = lifecycle.completed
+        ? getCompletedWinnerCode(match, teamCodeById, homeCode, awayCode, homePenaltyScore, awayPenaltyScore)
+        : undefined;
+
+      fixtures.set(match.IdMatch, {
+        id: match.IdMatch,
+        number: matchNumber,
+        kickoff: getMatchKickoff(match),
+        homeCode,
+        awayCode,
+        homeScore,
+        awayScore,
+        homePenaltyScore,
+        awayPenaltyScore,
+        labels: match.PlaceHolderA && match.PlaceHolderB ? [match.PlaceHolderA, match.PlaceHolderB] : undefined,
+        completed: lifecycle.completed,
+        live: lifecycle.live,
+        status: lifecycle.status,
+        resultStatus: lifecycle.resultStatus,
+        winnerCode
+      });
+    });
+  });
+
+  return [...fixtures.values()].sort((a, b) => a.kickoff.localeCompare(b.kickoff));
+}
+
+function parseFifaCalendarKnockoutFixtures(matches: FifaMatchResult[]) {
+  const teamCodeById = Object.fromEntries(
+    matches.flatMap((match) => [
+      match.Home?.IdTeam && getCalendarTeamCode(match.Home) ? [[match.Home.IdTeam, getCalendarTeamCode(match.Home)!]] : [],
+      match.Away?.IdTeam && getCalendarTeamCode(match.Away) ? [[match.Away.IdTeam, getCalendarTeamCode(match.Away)!]] : []
+    ].flat())
+  ) as Record<string, string>;
+  const fixtures = new Map<string, KnockoutFixture>();
+
+  matches.forEach((match) => {
+    const matchNumber = inferKnockoutMatchNumber(match);
+    if (!matchNumber || !officialPickOrder.includes(matchNumber)) return;
+
+    const homeCode = getResultTeamCode(match, "Home", teamCodeById);
+    const awayCode = getResultTeamCode(match, "Away", teamCodeById);
+    if (!homeCode || !awayCode) return;
+
+    const homeScore = getMatchScore(match, "Home");
+    const awayScore = getMatchScore(match, "Away");
+    const hasScore = homeScore !== null && awayScore !== null;
+    const lifecycle = getFixtureLifecycle(match, hasScore);
+    const homePenaltyScore = getPenaltyScore(match, "Home");
+    const awayPenaltyScore = getPenaltyScore(match, "Away");
+    const winnerCode = lifecycle.completed
+      ? getCompletedWinnerCode(match, teamCodeById, homeCode, awayCode, homePenaltyScore, awayPenaltyScore)
+      : undefined;
+
+    fixtures.set(match.IdMatch, {
+      id: match.IdMatch,
+      number: matchNumber,
+      kickoff: getMatchKickoff(match),
+      homeCode,
+      awayCode,
+      homeScore,
+      awayScore,
+      homePenaltyScore,
+      awayPenaltyScore,
+      labels: match.PlaceHolderA && match.PlaceHolderB ? [match.PlaceHolderA, match.PlaceHolderB] : undefined,
+      completed: lifecycle.completed,
+      live: lifecycle.live,
+      status: lifecycle.status,
+      resultStatus: lifecycle.resultStatus,
+      winnerCode
+    });
+  });
+
+  return [...fixtures.values()].sort((a, b) => a.kickoff.localeCompare(b.kickoff));
+}
+
 function parseFifaFixtures(rows: FifaStanding[]) {
   const teamCodeById = Object.fromEntries(
     rows.flatMap((row) => row.Team?.IdTeam && row.Team.IdCountry ? [[row.Team.IdTeam, row.Team.IdCountry]] : [])
@@ -291,16 +681,22 @@ function parseFifaFixtures(rows: FifaStanding[]) {
       const homeCode = teamCodeById[match.HomeTeamId];
       const awayCode = teamCodeById[match.AwayTeamId];
       if (!homeCode || !awayCode || !groupId) return;
-      const hasScore = match.HomeTeamScore !== null && match.AwayTeamScore !== null;
+      const homeScore = getMatchScore(match, "Home");
+      const awayScore = getMatchScore(match, "Away");
+      const hasScore = homeScore !== null && awayScore !== null;
+      const lifecycle = getFixtureLifecycle(match, hasScore);
       fixtures.set(match.IdMatch, {
         id: match.IdMatch,
         groupId,
-        kickoff: match.StartTime,
+        kickoff: getMatchKickoff(match),
         homeCode,
         awayCode,
-        homeScore: match.HomeTeamScore,
-        awayScore: match.AwayTeamScore,
-        completed: hasScore && (match.Result === 4 || new Date(match.StartTime).getTime() <= Date.now())
+        homeScore,
+        awayScore,
+        completed: lifecycle.completed,
+        live: lifecycle.live,
+        status: lifecycle.status,
+        resultStatus: lifecycle.resultStatus
       });
     });
   });
@@ -313,8 +709,9 @@ function calculateProjectedStats(fixtures: GroupFixture[], predictions: ScorePre
 
   fixtures.forEach((fixture) => {
     const predicted = predictions[fixture.id];
-    const home = fixture.completed ? fixture.homeScore : predicted?.home;
-    const away = fixture.completed ? fixture.awayScore : predicted?.away;
+    const liveNow = isFixtureLiveNow(fixture);
+    const home = fixture.completed ? fixture.homeScore : liveNow ? undefined : predicted?.home;
+    const away = fixture.completed ? fixture.awayScore : liveNow ? undefined : predicted?.away;
     if (home === null || away === null || home === undefined || away === undefined) return;
 
     const homeStats = projected[fixture.homeCode];
@@ -495,6 +892,14 @@ const officialPickOrder = [
   89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104
 ];
 
+const bracketRoundDefinitions: Array<{ key: BracketRoundKey; label: string; numbers: number[] }> = [
+  { key: "round32", label: "Round of 32", numbers: [73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88] },
+  { key: "round16", label: "Round of 16", numbers: [89, 90, 91, 92, 93, 94, 95, 96] },
+  { key: "quarterFinals", label: "Quarter-final", numbers: [97, 98, 99, 100] },
+  { key: "semiFinals", label: "Semi-final", numbers: [101, 102] },
+  { key: "final", label: "Final", numbers: [104] }
+];
+
 const leftBracketMatches = {
   round32: [74, 77, 73, 75, 83, 84, 81, 82],
   round16: [90, 89, 93, 94],
@@ -548,6 +953,28 @@ function buildRoundOf32(groupOrder: GroupOrder, thirdOrder: string[]) {
   ]);
 }
 
+function buildRoundOf32FromKnockoutFixtures(fixtures: KnockoutFixture[], fallbackRoundOf32: Map<number, OfficialMatch>) {
+  const next = new Map(fallbackRoundOf32);
+
+  fixtures.forEach((fixture) => {
+    if (!fixture.number || fixture.number < 73 || fixture.number > 88) return;
+    const home = findTeamByCode(fixture.homeCode);
+    const away = findTeamByCode(fixture.awayCode);
+    if (!home || !away) return;
+    const fallback = fallbackRoundOf32.get(fixture.number);
+    next.set(fixture.number, {
+      number: fixture.number,
+      teams: [home, away],
+      labels: [
+        fixture.labels?.[0] ?? fallback?.labels[0] ?? "TBD",
+        fixture.labels?.[1] ?? fallback?.labels[1] ?? "TBD"
+      ]
+    });
+  });
+
+  return next;
+}
+
 function resolveOfficialMatch(
   matchNumber: number,
   roundOf32: Map<number, OfficialMatch>,
@@ -598,6 +1025,76 @@ function sanitizeOfficialPicks(picks: BracketPicks, roundOf32: Map<number, Offic
 
 function sameBracketPicks(left: BracketPicks, right: BracketPicks) {
   return officialPickOrder.every((matchNumber) => left[`m${matchNumber}`] === right[`m${matchNumber}`]);
+}
+
+function matchHasTeamPair(match: OfficialMatch, homeCode: string, awayCode: string) {
+  const codes = match.teams.map((team) => team?.code).filter((code): code is string => Boolean(code));
+  return codes.length === 2 && codes.includes(homeCode) && codes.includes(awayCode);
+}
+
+function getKnockoutFixtureForMatch(
+  matchNumber: number,
+  fixtures: KnockoutFixture[],
+  roundOf32: Map<number, OfficialMatch>,
+  officialPicks: BracketPicks
+) {
+  const direct = fixtures.find((fixture) => fixture.number === matchNumber);
+  if (direct) return direct;
+
+  const match = resolveOfficialMatch(matchNumber, roundOf32, officialPicks);
+  const [teamA, teamB] = match.teams;
+  if (!teamA || !teamB) return undefined;
+
+  return fixtures.find((fixture) => !fixture.number && matchHasTeamPair(match, fixture.homeCode, fixture.awayCode));
+}
+
+function buildOfficialKnockoutPicks(fixtures: KnockoutFixture[], roundOf32: Map<number, OfficialMatch>) {
+  const officialPicks: BracketPicks = {};
+
+  officialPickOrder.forEach((matchNumber) => {
+    const fixture = getKnockoutFixtureForMatch(matchNumber, fixtures, roundOf32, officialPicks);
+    if (!fixture?.completed || !fixture.winnerCode) return;
+
+    const winner = findTeamByCode(fixture.winnerCode);
+    if (!winner) return;
+
+    const match = resolveOfficialMatch(matchNumber, roundOf32, officialPicks);
+    if (match.teams.some((team) => team?.code === winner.code)) {
+      officialPicks[`m${matchNumber}`] = winner.name;
+    }
+  });
+
+  return officialPicks;
+}
+
+function buildPredictionAccuracy(predictionPicks: BracketPicks, officialPicks: BracketPicks): PredictionAccuracy {
+  const rounds = bracketRoundDefinitions.map((round) => {
+    const completed = round.numbers.filter((matchNumber) => Boolean(officialPicks[`m${matchNumber}`]));
+    const correct = completed.filter((matchNumber) => predictionPicks[`m${matchNumber}`] === officialPicks[`m${matchNumber}`]).length;
+    return {
+      key: round.key,
+      label: round.label,
+      correct,
+      completed: completed.length,
+      total: round.numbers.length
+    };
+  });
+  const completed = rounds.reduce((total, round) => total + round.completed, 0);
+  const correct = rounds.reduce((total, round) => total + round.correct, 0);
+  return {
+    rounds,
+    completed,
+    correct,
+    percentage: completed ? Math.round((correct / completed) * 100) : 0,
+    finalCorrect: officialPicks.m104 ? predictionPicks.m104 === officialPicks.m104 : null
+  };
+}
+
+function getFixtureStatusLabel(fixture?: KnockoutFixture) {
+  if (!fixture) return "Upcoming";
+  if (fixture.completed) return "Completed";
+  if (fixture.live) return "Live";
+  return "Upcoming";
 }
 
 function hasEveryGroupReachedSecondMatch(stats: StatsMap) {
@@ -667,7 +1164,8 @@ function getRouteMetaLabel(route: QualificationRoute) {
 
 function getPreviewRouteNote(preview: RoundOf32TeamScenarioPreview, manualSimulationMode: boolean) {
   if (manualSimulationMode) return "This route is taken directly from your current Round of 32 bracket mapping.";
-  if (preview.routes.every((route) => route.isFinalRoute)) return "This Round of 32 matchup is fixed from completed group positions.";
+  if (preview.routes.every((route) => route.isFinalRoute)) return "This matchup follows the current FIFA Round of 32 mapping.";
+  if (preview.routes.some((route) => routeInvolvesThirdPlace(route.slotLabel, route.opponentSlotLabels))) return "The team position may be set, but the third-place table can still change this Round of 32 route.";
   if (preview.routes.every((route) => route.isPositionLocked)) return "This team has finished its group position; remaining uncertainty is only the opponent route.";
   return "Possible route count is based on all result combinations for the remaining matches in this group.";
 }
@@ -711,6 +1209,35 @@ function getFixtureOpponent(team: Team, fixture?: GroupFixture) {
   if (!fixture) return undefined;
   const opponentCode = fixture.homeCode === team.code ? fixture.awayCode : fixture.homeCode;
   return findTeamByCode(opponentCode);
+}
+
+function hasFixtureScore(fixture: GroupFixture) {
+  return fixture.homeScore !== null && fixture.awayScore !== null;
+}
+
+function isFixtureLiveNow(fixture: GroupFixture, now = Date.now()) {
+  const kickoffTime = new Date(fixture.kickoff).getTime();
+  const hasValidKickoff = Number.isFinite(kickoffTime);
+  const hasKickedOff = hasValidKickoff && kickoffTime <= now;
+  const isInsideLiveWindow = hasKickedOff && now - kickoffTime <= liveMatchWindowMs;
+  const resultStatus = Number(fixture.resultStatus ?? 0);
+  const isExplicitFinal = fixture.status === "completed" || resultStatus >= 4;
+  const statusLooksLive = fixture.status === "live" || fixture.live || (resultStatus > 0 && resultStatus < 4);
+
+  return !isExplicitFinal && (statusLooksLive || isInsideLiveWindow);
+}
+
+function getFixtureDisplayScore(fixture: GroupFixture): [number, number] | null {
+  if (fixture.homeScore !== null && fixture.awayScore !== null) return [fixture.homeScore, fixture.awayScore];
+  if (isFixtureLiveNow(fixture)) return [fixture.homeScore ?? 0, fixture.awayScore ?? 0];
+  return null;
+}
+
+function getLiveFixtureForTeam(team: Team, fixtures: GroupFixture[]) {
+  return fixtures.find((fixture) =>
+    isFixtureLiveNow(fixture) &&
+    (fixture.homeCode === team.code || fixture.awayCode === team.code)
+  );
 }
 
 function cloneStatsMap(stats: StatsMap) {
@@ -818,6 +1345,38 @@ function canThirdPlaceStateQualify(groupId: string, state: GroupOutcomeState, ou
   return guaranteedAbove < 8;
 }
 
+function isThirdCandidateGuaranteedToQualify(groupId: string, candidate: { team: Team; stats: TeamStats }, outcomeMap: Record<string, GroupOutcomeState[]>) {
+  const groupsThatCanFinishAbove = groups
+    .filter((group) => group.id !== groupId)
+    .filter((group) =>
+      outcomeMap[group.id]
+        ?.map((state) => getThirdCandidateForState(group.id, state))
+        .some((other) => other && compareStatsForRanking(other.stats, candidate.stats) <= 0)
+    ).length;
+
+  return groupsThatCanFinishAbove < 8;
+}
+
+function getThirdGroupStatuses(outcomeMap: Record<string, GroupOutcomeState[]>) {
+  return Object.fromEntries(
+    groups.map((group) => {
+      const candidates = (outcomeMap[group.id] ?? [])
+        .map((state) => getThirdCandidateForState(group.id, state))
+        .filter((candidate): candidate is { groupId: string; team: Team; stats: TeamStats } => Boolean(candidate));
+      const possible = (outcomeMap[group.id] ?? []).some((state) => canThirdPlaceStateQualify(group.id, state, outcomeMap));
+      const guaranteed = candidates.length > 0 && candidates.every((candidate) =>
+        isThirdCandidateGuaranteedToQualify(group.id, candidate, outcomeMap)
+      );
+      const thirdTeamNames = new Set(candidates.map((candidate) => candidate.team.name));
+
+      return [group.id, {
+        possible,
+        guaranteed,
+        thirdTeamLocked: thirdTeamNames.size === 1
+      }];
+    })
+  ) as Record<string, { possible: boolean; guaranteed: boolean; thirdTeamLocked: boolean }>;
+}
 function teamCanFinishPosition(states: GroupOutcomeState[], teamName: string, position: number) {
   return states.some((state) => state.order[position - 1] === teamName);
 }
@@ -918,9 +1477,24 @@ function getPossibleThirdQualifyingGroups(outcomeMap: Record<string, GroupOutcom
     .map((group) => group.id);
 }
 
-function getPossibleThirdSourcesForWinner(winnerGroup: keyof ReturnType<typeof getAnnexCAllocation>, possibleThirdGroups: string[]) {
+function chooseQualifyingThirdGroupSets(possibleThirdGroups: string[], guaranteedThirdGroups: string[], requiredGroup?: string) {
+  const required = new Set(guaranteedThirdGroups);
+  if (requiredGroup) required.add(requiredGroup);
+  if ([...required].some((groupId) => !possibleThirdGroups.includes(groupId)) || required.size > 8) return [];
+
+  const optionalGroups = possibleThirdGroups.filter((groupId) => !required.has(groupId));
+  return chooseGroupSets(optionalGroups, 8 - required.size).map((optionalSet) =>
+    [...required, ...optionalSet].sort()
+  );
+}
+
+function getPossibleThirdSourcesForWinner(
+  winnerGroup: keyof ReturnType<typeof getAnnexCAllocation>,
+  possibleThirdGroups: string[],
+  guaranteedThirdGroups: string[]
+) {
   const sources = new Set<string>();
-  chooseGroupSets(possibleThirdGroups, 8).forEach((groupSet) => {
+  chooseQualifyingThirdGroupSets(possibleThirdGroups, guaranteedThirdGroups).forEach((groupSet) => {
     try {
       sources.add(getAnnexCAllocation(groupSet)[winnerGroup]);
     } catch {
@@ -930,9 +1504,9 @@ function getPossibleThirdSourcesForWinner(winnerGroup: keyof ReturnType<typeof g
   return [...sources];
 }
 
-function getPossibleWinnerGroupsForThird(thirdGroupId: string, possibleThirdGroups: string[]) {
+function getPossibleWinnerGroupsForThird(thirdGroupId: string, possibleThirdGroups: string[], guaranteedThirdGroups: string[]) {
   const winners = new Set<keyof ReturnType<typeof getAnnexCAllocation>>();
-  chooseGroupSets(possibleThirdGroups, 8, thirdGroupId).forEach((groupSet) => {
+  chooseQualifyingThirdGroupSets(possibleThirdGroups, guaranteedThirdGroups, thirdGroupId).forEach((groupSet) => {
     try {
       const allocation = getAnnexCAllocation(groupSet);
       Object.entries(allocation).forEach(([winnerGroup, sourceGroup]) => {
@@ -948,7 +1522,8 @@ function getPossibleWinnerGroupsForThird(thirdGroupId: string, possibleThirdGrou
 function buildAutomaticRouteOpponents(
   slotLabel: string,
   outcomeMap: Record<string, GroupOutcomeState[]>,
-  possibleThirdGroups: string[]
+  possibleThirdGroups: string[],
+  guaranteedThirdGroups: string[]
 ) {
   const slot = automaticRoundOf32Slots[slotLabel];
   if (!slot) return { matchNumbers: [] as number[], opponentSlotLabels: [] as string[], possibleOpponents: [] as Team[] };
@@ -963,7 +1538,7 @@ function buildAutomaticRouteOpponents(
     };
   }
 
-  const sourceGroups = getPossibleThirdSourcesForWinner(slot.thirdOpponentForWinner!, possibleThirdGroups);
+  const sourceGroups = getPossibleThirdSourcesForWinner(slot.thirdOpponentForWinner!, possibleThirdGroups, guaranteedThirdGroups);
   return {
     matchNumbers: [slot.matchNumber],
     opponentSlotLabels: sourceGroups.map((groupId) => `3${groupId}`),
@@ -974,9 +1549,10 @@ function buildAutomaticRouteOpponents(
 function buildThirdRouteOpponents(
   groupId: string,
   outcomeMap: Record<string, GroupOutcomeState[]>,
-  possibleThirdGroups: string[]
+  possibleThirdGroups: string[],
+  guaranteedThirdGroups: string[]
 ) {
-  const winnerGroups = getPossibleWinnerGroupsForThird(groupId, possibleThirdGroups);
+  const winnerGroups = getPossibleWinnerGroupsForThird(groupId, possibleThirdGroups, guaranteedThirdGroups);
   const matchNumbers = winnerGroups
     .map((winnerGroup) => automaticRoundOf32Slots[`1${winnerGroup}`]?.matchNumber)
     .filter((matchNumber): matchNumber is number => Boolean(matchNumber));
@@ -987,6 +1563,54 @@ function buildThirdRouteOpponents(
   };
 }
 
+function routeInvolvesThirdPlace(slotLabel: string, opponentSlotLabels: string[]) {
+  return slotLabel.startsWith("3") || opponentSlotLabels.some((label) => label.startsWith("3"));
+}
+
+function getCurrentRoundOf32Route(team: Team, slotLabel: string, roundOf32: Map<number, OfficialMatch>) {
+  const currentSlot = getRoundOf32SlotPreview(team, roundOf32);
+  if (!currentSlot || currentSlot.slotLabel !== slotLabel || !currentSlot.opponent) return null;
+
+  return {
+    matchNumbers: [currentSlot.matchNumber],
+    opponentSlotLabels: [currentSlot.opponentSlotLabel],
+    possibleOpponents: [currentSlot.opponent]
+  };
+}
+
+function getThirdGroupIdsFromRoute(slotLabel: string, opponentSlotLabels: string[]) {
+  return [slotLabel, ...opponentSlotLabels]
+    .filter((label) => label.startsWith("3"))
+    .map((label) => label.slice(1));
+}
+
+function getLockedCurrentThirdRoute(
+  team: Team,
+  slotLabel: string,
+  opponents: { matchNumbers: number[]; opponentSlotLabels: string[]; possibleOpponents: Team[] },
+  isPositionLocked: boolean,
+  thirdGroupStatuses: Record<string, { possible: boolean; guaranteed: boolean; thirdTeamLocked: boolean }>,
+  roundOf32: Map<number, OfficialMatch>
+) {
+  if (!isPositionLocked || !routeInvolvesThirdPlace(slotLabel, opponents.opponentSlotLabels)) return null;
+
+  const currentRoute = getCurrentRoundOf32Route(team, slotLabel, roundOf32);
+  if (!currentRoute) return null;
+
+  const thirdGroupIds = getThirdGroupIdsFromRoute(slotLabel, currentRoute.opponentSlotLabels);
+  const thirdGroupsAreGuaranteed = thirdGroupIds.length > 0 && thirdGroupIds.every((groupId) => {
+    const status = thirdGroupStatuses[groupId];
+    return status?.guaranteed && status.thirdTeamLocked;
+  });
+  if (!thirdGroupsAreGuaranteed) return null;
+
+  const routeStillMapsToCurrentSlot = opponents.opponentSlotLabels.length === 1 &&
+    opponents.opponentSlotLabels[0] === currentRoute.opponentSlotLabels[0];
+  const routeStillMapsToCurrentOpponent = opponents.possibleOpponents.length === 1 &&
+    opponents.possibleOpponents[0]?.name === currentRoute.possibleOpponents[0]?.name;
+
+  return routeStillMapsToCurrentSlot && routeStillMapsToCurrentOpponent ? currentRoute : null;
+}
 function buildQualificationRoute({
   team,
   states,
@@ -1100,7 +1724,9 @@ function buildGroupOpponentPreviews({
   }
 
   const outcomeMap = buildGroupOutcomeMap(fixtures, stats);
+  const thirdGroupStatuses = getThirdGroupStatuses(outcomeMap);
   const possibleThirdGroups = getPossibleThirdQualifyingGroups(outcomeMap);
+  const guaranteedThirdGroups = groups.filter((group) => thirdGroupStatuses[group.id]?.guaranteed).map((group) => group.id);
   const groupStates = outcomeMap[group.id] ?? [];
   const currentOrder = groupOrder[group.id] ?? group.teams.map((team) => team.name);
 
@@ -1113,9 +1739,11 @@ function buildGroupOpponentPreviews({
       [1, 2].forEach((position) => {
         const positionStates = getTeamStatesForPosition(groupStates, team.name, position);
         const slotLabel = `${position}${group.id}`;
-        const opponents = buildAutomaticRouteOpponents(slotLabel, outcomeMap, possibleThirdGroups);
+        const broadOpponents = buildAutomaticRouteOpponents(slotLabel, outcomeMap, possibleThirdGroups, guaranteedThirdGroups);
         const isPositionLocked = isSlotPositionLocked(slotLabel, fixtures);
-        const isFinalRoute = isRoundOf32RouteFixed(slotLabel, opponents.opponentSlotLabels, fixtures);
+        const currentOpponents = getLockedCurrentThirdRoute(team, slotLabel, broadOpponents, isPositionLocked, thirdGroupStatuses, roundOf32);
+        const opponents = currentOpponents ?? broadOpponents;
+        const isFinalRoute = Boolean(currentOpponents) || isRoundOf32RouteFixed(slotLabel, opponents.opponentSlotLabels, fixtures);
         const route = buildQualificationRoute({
           team,
           states: positionStates,
@@ -1133,9 +1761,11 @@ function buildGroupOpponentPreviews({
 
       const thirdStates = getTeamQualifiedThirdStates(group.id, groupStates, team.name, outcomeMap);
       const thirdSlotLabel = `3${group.id}`;
-      const thirdOpponents = buildThirdRouteOpponents(group.id, outcomeMap, possibleThirdGroups);
+      const broadThirdOpponents = buildThirdRouteOpponents(group.id, outcomeMap, possibleThirdGroups, guaranteedThirdGroups);
       const isThirdPositionLocked = isSlotPositionLocked(thirdSlotLabel, fixtures);
-      const isThirdFinalRoute = isRoundOf32RouteFixed(thirdSlotLabel, thirdOpponents.opponentSlotLabels, fixtures);
+      const currentThirdOpponents = getLockedCurrentThirdRoute(team, thirdSlotLabel, broadThirdOpponents, isThirdPositionLocked, thirdGroupStatuses, roundOf32);
+      const thirdOpponents = currentThirdOpponents ?? broadThirdOpponents;
+      const isThirdFinalRoute = Boolean(currentThirdOpponents) || isRoundOf32RouteFixed(thirdSlotLabel, thirdOpponents.opponentSlotLabels, fixtures);
       const thirdRoute = buildQualificationRoute({
         team,
         states: thirdStates,
@@ -1155,19 +1785,23 @@ function buildGroupOpponentPreviews({
     })
     .filter((preview): preview is RoundOf32TeamScenarioPreview => Boolean(preview));
 }
+
 function LiveTablePredictorApp() {
   const initialOrder = useMemo(loadGroupOrder, []);
   const cache = useMemo(loadCachedStats, []);
   const rankingCache = useMemo(loadCachedRankings, []);
   const [view, setView] = useState<View>("groups");
+  const [bracketMode, setBracketMode] = useState<BracketMode>(loadBracketMode);
   const [groupOrder, setGroupOrder] = useState<GroupOrder>(initialOrder);
   const [thirdOrder, setThirdOrder] = useState(() => loadThirdOrder(initialOrder));
-  const [bracketPicks, setBracketPicks] = useState<BracketPicks>(loadBracketPicks);
+  const [predictionPaths, setPredictionPaths] = useState<PredictionPath[]>(loadPredictionPaths);
+  const [activePredictionPathId, setActivePredictionPathId] = useState(() => loadActivePredictionPathId(predictionPaths));
   const [autoPickSnapshot, setAutoPickSnapshot] = useState<BracketPicks | null>(loadAutoPickSnapshot);
   const [autoPickCache, setAutoPickCache] = useState<AutoPickCache | null>(loadAutoPickCache);
   const [stats, setStats] = useState<StatsMap>(cache.stats);
   const [rankings, setRankings] = useState<RankingMap>(rankingCache.rankings);
   const [fixtures, setFixtures] = useState<GroupFixture[]>(loadCachedFixtures);
+  const [knockoutFixtures, setKnockoutFixtures] = useState<KnockoutFixture[]>(loadCachedKnockoutFixtures);
   const [scorePredictions, setScorePredictions] = useState<ScorePredictions>(loadScorePredictions);
   const [manualSimulationMode, setManualSimulationMode] = useState(loadManualSimulationMode);
   const [predictionGroup, setPredictionGroup] = useState<string | null>(null);
@@ -1187,14 +1821,30 @@ function LiveTablePredictorApp() {
       });
       if (!response.ok) throw new Error(`FIFA returned ${response.status}`);
       const payload = (await response.json()) as { Results?: FifaStanding[] };
-      const nextStats = parseFifaStandings(payload.Results ?? []);
-      const nextFixtures = parseFifaFixtures(payload.Results ?? []);
+      const results = payload.Results ?? [];
+      const nextStats = parseFifaStandings(results);
+      const nextFixtures = parseFifaFixtures(results);
+      let nextKnockoutFixtures = parseFifaKnockoutFixtures(results);
+      try {
+        const matchesResponse = await fetch(fifaMatchesApi, {
+          headers: { Accept: "application/json" },
+          signal
+        });
+        if (matchesResponse.ok) {
+          const matchesPayload = (await matchesResponse.json()) as { Results?: FifaMatchResult[] };
+          const calendarKnockoutFixtures = parseFifaCalendarKnockoutFixtures(matchesPayload.Results ?? []);
+          if (calendarKnockoutFixtures.length > 0) nextKnockoutFixtures = calendarKnockoutFixtures;
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") throw error;
+      }
       if (Object.keys(nextStats).length < 48 || nextFixtures.length < 72) {
         throw new Error("Incomplete FIFA standings response");
       }
       const updatedAt = new Date().toISOString();
       setStats(nextStats);
       setFixtures(nextFixtures);
+      setKnockoutFixtures(nextKnockoutFixtures);
       setLastUpdated(updatedAt);
       setFeedState("live");
       window.localStorage.setItem(
@@ -1202,6 +1852,7 @@ function LiveTablePredictorApp() {
         JSON.stringify({ stats: nextStats, updatedAt })
       );
       window.localStorage.setItem("fifa-live-fixtures-cache-v1", JSON.stringify(nextFixtures));
+      window.localStorage.setItem("fifa-knockout-fixtures-cache-v1", JSON.stringify(nextKnockoutFixtures));
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       setFeedState(Object.keys(loadCachedStats().stats).length ? "cached" : "error");
@@ -1265,9 +1916,30 @@ function LiveTablePredictorApp() {
     window.localStorage.setItem("fifa-rank-predictor-thirds-v1", JSON.stringify(thirdOrder));
   }, [thirdOrder]);
 
+  const activePredictionPath = useMemo(
+    () => predictionPaths.find((path) => path.id === activePredictionPathId) ?? predictionPaths[0],
+    [predictionPaths, activePredictionPathId]
+  );
+  const bracketPicks = activePredictionPath?.picks ?? {};
+
   useEffect(() => {
+    if (predictionPaths.length > 0 && !predictionPaths.some((path) => path.id === activePredictionPathId)) {
+      setActivePredictionPathId(predictionPaths[0].id);
+    }
+  }, [predictionPaths, activePredictionPathId]);
+
+  useEffect(() => {
+    window.localStorage.setItem("fifa-prediction-paths-v1", JSON.stringify(predictionPaths));
     window.localStorage.setItem("fifa-rank-predictor-bracket-v1", JSON.stringify(bracketPicks));
-  }, [bracketPicks]);
+  }, [predictionPaths, bracketPicks]);
+
+  useEffect(() => {
+    window.localStorage.setItem("fifa-active-prediction-path-v1", activePredictionPathId);
+  }, [activePredictionPathId]);
+
+  useEffect(() => {
+    window.localStorage.setItem("fifa-dual-bracket-mode-v1", bracketMode);
+  }, [bracketMode]);
 
   useEffect(() => {
     if (autoPickSnapshot === null) {
@@ -1350,16 +2022,103 @@ function LiveTablePredictorApp() {
     () => buildRoundOf32(groupOrder, thirdOrder),
     [groupOrder, thirdOrder]
   );
+  const bracketRoundOf32 = useMemo(
+    () => buildRoundOf32FromKnockoutFixtures(knockoutFixtures, roundOf32),
+    [knockoutFixtures, roundOf32]
+  );
+  const officialPicks = useMemo(
+    () => buildOfficialKnockoutPicks(knockoutFixtures, bracketRoundOf32),
+    [knockoutFixtures, bracketRoundOf32]
+  );
+  const predictionAccuracy = useMemo(
+    () => buildPredictionAccuracy(bracketPicks, officialPicks),
+    [bracketPicks, officialPicks]
+  );
+  const activeBracketPicks = bracketMode === "official" ? officialPicks : bracketPicks;
   const roundOf32PreviewReady = hasEveryGroupReachedSecondMatch(projectedStats);
-  const champion = findTeam(bracketPicks.m104);
+  const predictionChampion = findTeam(bracketPicks.m104);
+  const officialChampion = findTeam(officialPicks.m104);
+  const activeChampion = bracketMode === "official" ? officialChampion : predictionChampion;
   const knockoutPickCount = officialPickOrder.filter((matchNumber) => bracketPicks[`m${matchNumber}`]).length;
 
   useEffect(() => {
-    setBracketPicks((current) => {
-      const sanitized = sanitizeOfficialPicks(current, roundOf32);
-      return JSON.stringify(sanitized) === JSON.stringify(current) ? current : sanitized;
+    setPredictionPaths((current) => {
+      let changed = false;
+      const now = new Date().toISOString();
+      const next = current.map((path) => {
+        const sanitized = sanitizeOfficialPicks(path.picks, bracketRoundOf32);
+        if (JSON.stringify(sanitized) === JSON.stringify(path.picks)) return path;
+        changed = true;
+        return { ...path, picks: sanitized, updatedAt: now };
+      });
+      return changed ? next : current;
     });
-  }, [roundOf32]);
+  }, [bracketRoundOf32]);
+
+  function updateActivePredictionPicks(nextPicksOrUpdater: BracketPicks | ((current: BracketPicks) => BracketPicks)) {
+    setPredictionPaths((current) => {
+      const activeId = current.some((path) => path.id === activePredictionPathId)
+        ? activePredictionPathId
+        : current[0]?.id;
+      const now = new Date().toISOString();
+
+      if (!activeId) {
+        const nextPicks = typeof nextPicksOrUpdater === "function"
+          ? nextPicksOrUpdater({})
+          : nextPicksOrUpdater;
+        const path = createPredictionPathRecord("Prediction 1", nextPicks);
+        setActivePredictionPathId(path.id);
+        return [path];
+      }
+
+      return current.map((path) => {
+        if (path.id !== activeId) return path;
+        const nextPicks = typeof nextPicksOrUpdater === "function"
+          ? nextPicksOrUpdater(path.picks)
+          : nextPicksOrUpdater;
+        return { ...path, picks: nextPicks, updatedAt: now };
+      });
+    });
+  }
+
+  function createPredictionPath() {
+    const path = createPredictionPathRecord(`Prediction ${predictionPaths.length + 1}`);
+    setPredictionPaths((current) => [...current, path]);
+    setActivePredictionPathId(path.id);
+    setAutoPickSnapshot(null);
+    setAutoPickCache(null);
+    setBracketMode("prediction");
+  }
+
+  function switchPredictionPath(pathId: string) {
+    if (!predictionPaths.some((path) => path.id === pathId)) return;
+    setActivePredictionPathId(pathId);
+    setAutoPickSnapshot(null);
+    setAutoPickCache(null);
+    setBracketMode("prediction");
+  }
+
+  function renamePredictionPath(pathId: string, name: string) {
+    const limitedName = name.slice(0, 40);
+    setPredictionPaths((current) => current.map((path) =>
+      path.id === pathId ? { ...path, name: limitedName, updatedAt: new Date().toISOString() } : path
+    ));
+  }
+
+  function deletePredictionPath(pathId: string) {
+    const remaining = predictionPaths.filter((path) => path.id !== pathId);
+    if (remaining.length === 0) {
+      const replacement = createPredictionPathRecord("Prediction 1");
+      setPredictionPaths([replacement]);
+      setActivePredictionPathId(replacement.id);
+    } else {
+      setPredictionPaths(remaining);
+      if (activePredictionPathId === pathId) setActivePredictionPathId(remaining[0].id);
+    }
+    setAutoPickSnapshot(null);
+    setAutoPickCache(null);
+    setBracketMode("prediction");
+  }
 
   function switchView(nextView: View) {
     setView(nextView);
@@ -1380,7 +2139,7 @@ function LiveTablePredictorApp() {
       ...current.filter((teamName) => nextThirdNames.includes(teamName)),
       ...nextThirdNames.filter((teamName) => !current.includes(teamName))
     ]);
-    setBracketPicks({});
+    updateActivePredictionPicks({});
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
   }
@@ -1394,7 +2153,7 @@ function LiveTablePredictorApp() {
       next.splice(toIndex, 0, team);
       return next;
     });
-    setBracketPicks({});
+    updateActivePredictionPicks({});
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
   }
@@ -1422,7 +2181,7 @@ function LiveTablePredictorApp() {
     setManualSimulationMode(false);
     setGroupOrder(nextGroupOrder);
     setThirdOrder(rankedThirds.map((team) => team.name));
-    setBracketPicks({});
+    updateActivePredictionPicks({});
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
     setPredictionGroup(null);
@@ -1432,7 +2191,7 @@ function LiveTablePredictorApp() {
     setManualSimulationMode(false);
     setGroupOrder(rankedGroupOrder);
     setThirdOrder(rankThirdNamesForOrder(rankedGroupOrder, projectedStats));
-    setBracketPicks({});
+    updateActivePredictionPicks({});
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
   }
@@ -1444,34 +2203,63 @@ function LiveTablePredictorApp() {
     setThirdOrder(groups.map((group) => defaults[group.id][2]));
     setScorePredictions({});
     setPredictionGroup(null);
-    setBracketPicks({});
+    updateActivePredictionPicks({});
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
   }
 
   function selectWinner(matchNumber: number, teamName: string) {
+    if (bracketMode === "official") return;
     const pickKey = `m${matchNumber}`;
     if (bracketPicks[pickKey] === teamName) return;
 
     const manualBaseline = autoPickSnapshot ?? bracketPicks;
-    setBracketPicks(
-      sanitizeOfficialPicks({ ...manualBaseline, [pickKey]: teamName }, roundOf32)
-    );
+    updateActivePredictionPicks(sanitizeOfficialPicks({ ...manualBaseline, [pickKey]: teamName }, bracketRoundOf32));
+    setAutoPickSnapshot(null);
+    setAutoPickCache(null);
+  }
+
+  function resetMatchToOfficial(matchNumber: number) {
+    const officialWinner = officialPicks[`m${matchNumber}`];
+    if (!officialWinner) return;
+    updateActivePredictionPicks((current) => sanitizeOfficialPicks({ ...current, [`m${matchNumber}`]: officialWinner }, bracketRoundOf32));
+    setAutoPickSnapshot(null);
+    setAutoPickCache(null);
+  }
+
+  function resetRoundToOfficial(roundKey: BracketRoundKey) {
+    const round = bracketRoundDefinitions.find((item) => item.key === roundKey);
+    if (!round) return;
+    updateActivePredictionPicks((current) => {
+      const next = { ...current };
+      round.numbers.forEach((matchNumber) => {
+        const officialWinner = officialPicks[`m${matchNumber}`];
+        if (officialWinner) next[`m${matchNumber}`] = officialWinner;
+        else delete next[`m${matchNumber}`];
+      });
+      return sanitizeOfficialPicks(next, bracketRoundOf32);
+    });
+    setAutoPickSnapshot(null);
+    setAutoPickCache(null);
+  }
+
+  function resetBracketToOfficial() {
+    updateActivePredictionPicks(sanitizeOfficialPicks(officialPicks, bracketRoundOf32));
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
   }
 
   function autoPickBracket() {
     if (autoPickSnapshot !== null) {
-      setBracketPicks(autoPickSnapshot);
+      updateActivePredictionPicks(autoPickSnapshot);
       setAutoPickSnapshot(null);
       return;
     }
 
-    const baseline = sanitizeOfficialPicks(bracketPicks, roundOf32);
+    const baseline = sanitizeOfficialPicks(bracketPicks, bracketRoundOf32);
     if (autoPickCache && sameBracketPicks(autoPickCache.baseline, baseline)) {
       setAutoPickSnapshot(baseline);
-      setBracketPicks(autoPickCache.generated);
+      updateActivePredictionPicks(autoPickCache.generated);
       return;
     }
 
@@ -1480,7 +2268,7 @@ function LiveTablePredictorApp() {
       const pickKey = `m${matchNumber}`;
       if (next[pickKey]) return;
 
-      const match = resolveOfficialMatch(matchNumber, roundOf32, next);
+      const match = resolveOfficialMatch(matchNumber, bracketRoundOf32, next);
       const [teamA, teamB] = match.teams;
       const winner = teamA && teamB
         ? pickProbableWinner(
@@ -1495,11 +2283,11 @@ function LiveTablePredictorApp() {
 
     setAutoPickCache({ baseline, generated: next });
     setAutoPickSnapshot(baseline);
-    setBracketPicks(next);
+    updateActivePredictionPicks(next);
   }
 
   function resetBracket() {
-    setBracketPicks({});
+    updateActivePredictionPicks({});
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
   }
@@ -1528,8 +2316,8 @@ function LiveTablePredictorApp() {
       </div>
 
       <main>
-        <Hero view={view} champion={champion} />
-        <ProgressBar view={view} knockoutPickCount={knockoutPickCount} champion={champion} />
+        <Hero view={view} champion={activeChampion} />
+        <ProgressBar view={view} knockoutPickCount={knockoutPickCount} champion={predictionChampion} />
         {view === "groups" ? (
           <GroupPredictor
             groupOrder={groupOrder}
@@ -1552,13 +2340,28 @@ function LiveTablePredictorApp() {
           />
         ) : (
           <KnockoutStage
-            roundOf32={roundOf32}
-            picks={bracketPicks}
-            champion={champion}
+            roundOf32={bracketRoundOf32}
+            mode={bracketMode}
+            picks={activeBracketPicks}
+            predictionPicks={bracketPicks}
+            predictionPaths={predictionPaths}
+            activePredictionPathId={activePredictionPathId}
+            officialPicks={officialPicks}
+            accuracy={predictionAccuracy}
+            champion={activeChampion}
+            knockoutFixtures={knockoutFixtures}
+            onModeChange={setBracketMode}
+            onPredictionPathChange={switchPredictionPath}
+            onCreatePredictionPath={createPredictionPath}
+            onDeletePredictionPath={deletePredictionPath}
+            onRenamePredictionPath={renamePredictionPath}
             onPick={selectWinner}
             onAutoPick={autoPickBracket}
             autoPickActive={autoPickSnapshot !== null}
-            onReset={resetBracket}
+            onResetMatchToOfficial={resetMatchToOfficial}
+            onResetRoundToOfficial={resetRoundToOfficial}
+            onResetToOfficial={resetBracketToOfficial}
+            onClearPredictions={resetBracket}
             onBack={() => switchView("groups")}
           />
         )}
@@ -1728,7 +2531,7 @@ function GroupPredictor({
             order={groupOrder[group.id]}
             bestThirdNames={bestThirdNames}
             stats={stats}
-            fixtureCount={fixtures.filter((fixture) => fixture.groupId === group.id).length}
+            fixtures={fixtures.filter((fixture) => fixture.groupId === group.id)}
             onMove={onMoveGroupTeam}
             onPredict={onPredictGroup}
             onPreviewOpponents={onPreviewOpponents}
@@ -1775,7 +2578,7 @@ function LiveGroupCard({
   order,
   bestThirdNames,
   stats,
-  fixtureCount,
+  fixtures,
   onMove,
   onPredict,
   onPreviewOpponents,
@@ -1785,7 +2588,7 @@ function LiveGroupCard({
   order: string[];
   bestThirdNames: Set<string>;
   stats: StatsMap;
-  fixtureCount: number;
+  fixtures: GroupFixture[];
   onMove: (groupId: string, fromIndex: number, toIndex: number) => void;
   onPredict: (groupId: string) => void;
   onPreviewOpponents: (groupId: string) => void;
@@ -1797,6 +2600,9 @@ function LiveGroupCard({
     if (dragIndex !== null) onMove(group.id, dragIndex, toIndex);
     setDragIndex(null);
   }
+
+  const fixtureCount = fixtures.length;
+
   return (
     <article className="group-card live-group-card">
       <header>
@@ -1813,10 +2619,11 @@ function LiveGroupCard({
           {order.map((teamName, index) => {
             const team = findTeam(teamName)!;
             const teamStats = stats[team.code] ?? emptyStats;
+            const liveFixture = getLiveFixtureForTeam(team, fixtures);
             const thirdQualified = index === 2 && bestThirdNames.has(teamName);
             return (
               <div
-                className={`live-team-row ${index < 2 ? "automatic" : ""} ${thirdQualified ? "third-qualified" : ""} ${dragIndex === index ? "dragging" : ""}`}
+                className={`live-team-row ${index < 2 ? "automatic" : ""} ${thirdQualified ? "third-qualified" : ""} ${liveFixture ? "live-match" : ""} ${dragIndex === index ? "dragging" : ""}`}
                 draggable
                 key={team.name}
                 onDragEnd={() => setDragIndex(null)}
@@ -1827,7 +2634,10 @@ function LiveGroupCard({
                 <span className="rank-number">{index + 1}</span>
                 <span className="live-team-cell">
                   <GripVertical className="drag-handle" size={16} />
-                  <Flag team={team} />
+                  <span className="live-team-flag-score">
+                    <Flag team={team} />
+                    {liveFixture && <LiveScoreBadge team={team} fixture={liveFixture} />}
+                  </span>
                   <strong>{team.name}</strong>
                 </span>
                 {statColumns.map((column) => (
@@ -1868,6 +2678,25 @@ function LiveGroupCard({
   );
 }
 
+function LiveScoreBadge({ team, fixture }: { team: Team; fixture: GroupFixture }) {
+  const score = getFixtureDisplayScore(fixture);
+  if (!score) return null;
+
+  const isHomeTeam = fixture.homeCode === team.code;
+  const [homeScore, awayScore] = score;
+  const ownScore = isHomeTeam ? homeScore : awayScore;
+  const opponentScore = isHomeTeam ? awayScore : homeScore;
+  const opponent = findTeamByCode(isHomeTeam ? fixture.awayCode : fixture.homeCode);
+
+  return (
+    <span className="live-score-badge" title={`Live vs ${opponent?.name ?? "opponent"}`}>
+      <i />
+      <span>LIVE</span>
+      <strong>{ownScore}-{opponentScore}</strong>
+    </span>
+  );
+}
+
 function ThirdPlacePredictor({ order, stats, onMove }: { order: string[]; stats: StatsMap; onMove: (fromIndex: number, toIndex: number) => void }) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   function drop(event: DragEvent<HTMLDivElement>, toIndex: number) {
@@ -1875,6 +2704,7 @@ function ThirdPlacePredictor({ order, stats, onMove }: { order: string[]; stats:
     if (dragIndex !== null) onMove(dragIndex, toIndex);
     setDragIndex(null);
   }
+
   return (
     <section className="third-place-panel rank-third-panel">
       <header>
@@ -1925,84 +2755,251 @@ function Flag({ team, className = "" }: { team: Team; className?: string }) {
   return <span className={`official-flag ${className}`}><img src={flagUrl(team.code)} alt={`${team.name} flag`} /></span>;
 }
 
+function PredictionAccuracyPanel({ accuracy }: { accuracy: PredictionAccuracy }) {
+  return (
+    <aside className="prediction-accuracy-panel" aria-label="Prediction accuracy tracker">
+      <div className="accuracy-score-card">
+        <span>Prediction accuracy</span>
+        <strong>{accuracy.completed ? `${accuracy.percentage}%` : "--"}</strong>
+        <em>{accuracy.completed ? `${accuracy.correct}/${accuracy.completed} completed picks correct` : "Starts after knockout results"}</em>
+      </div>
+      <div className="accuracy-round-list">
+        {accuracy.rounds.map((round) => (
+          <div className="accuracy-round-row" key={round.key}>
+            <span>{round.label}</span>
+            <strong>{round.completed ? `${round.correct}/${round.completed}` : `0/${round.total}`}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="accuracy-final-row">
+        <Trophy size={15} />
+        <span>Final winner correct:</span>
+        <strong>{accuracy.finalCorrect === null ? "Pending" : accuracy.finalCorrect ? "Yes" : "No"}</strong>
+      </div>
+    </aside>
+  );
+}
+
 function KnockoutStage({
   roundOf32,
+  mode,
   picks,
+  predictionPicks,
+  predictionPaths,
+  activePredictionPathId,
+  officialPicks,
+  accuracy,
   champion,
+  knockoutFixtures,
+  onModeChange,
+  onPredictionPathChange,
+  onCreatePredictionPath,
+  onDeletePredictionPath,
+  onRenamePredictionPath,
   onPick,
   onAutoPick,
   autoPickActive,
-  onReset,
+  onResetMatchToOfficial,
+  onResetRoundToOfficial,
+  onResetToOfficial,
+  onClearPredictions,
   onBack
 }: {
   roundOf32: Map<number, OfficialMatch>;
+  mode: BracketMode;
   picks: BracketPicks;
+  predictionPicks: BracketPicks;
+  predictionPaths: PredictionPath[];
+  activePredictionPathId: string;
+  officialPicks: BracketPicks;
+  accuracy: PredictionAccuracy;
   champion?: Team;
+  knockoutFixtures: KnockoutFixture[];
+  onModeChange: (mode: BracketMode) => void;
+  onPredictionPathChange: (pathId: string) => void;
+  onCreatePredictionPath: () => void;
+  onDeletePredictionPath: (pathId: string) => void;
+  onRenamePredictionPath: (pathId: string, name: string) => void;
   onPick: (matchNumber: number, teamName: string) => void;
   onAutoPick: () => void;
   autoPickActive: boolean;
-  onReset: () => void;
+  onResetMatchToOfficial: (matchNumber: number) => void;
+  onResetRoundToOfficial: (roundKey: BracketRoundKey) => void;
+  onResetToOfficial: () => void;
+  onClearPredictions: () => void;
   onBack: () => void;
 }) {
+  const officialCompletedCount = Object.values(officialPicks).filter(Boolean).length;
+  const isPredictionMode = mode === "prediction";
+  const activePredictionPath = predictionPaths.find((path) => path.id === activePredictionPathId) ?? predictionPaths[0];
+
   return (
-    <section className="content-section official-knockout-section">
+    <section className="content-section official-knockout-section dual-bracket-section">
       <header className="section-heading bracket-heading">
         <div>
-          <span className="eyebrow">OFFICIAL FIFA PATH · M73–M104</span>
-          <h2>Knockout bracket</h2>
+          <span className="eyebrow">DUAL BRACKET MODE � M73-M104</span>
+          <h2>{isPredictionMode ? "My prediction bracket" : "Official bracket"}</h2>
           <p>
-            Auto-pick preserves manual choices, repeats the same result for the same matchups, and recalculates only paths affected by a changed pick.
+            {isPredictionMode
+              ? "Make private what-if picks without changing official results. Completed matches can be reset back to the official winner anytime."
+              : "This view advances teams only from completed official knockout results. Upcoming and live matches stay unpicked until full-time."}
           </p>
         </div>
-        <div className="bracket-tools">
+        <div className="bracket-tools dual-bracket-tools">
           <button className="secondary-button" onClick={onBack} type="button"><ArrowLeft size={17} /> Predictor</button>
-          <button
-            className={`secondary-button accent ${autoPickActive ? "undo-auto-picks" : ""}`}
-            onClick={onAutoPick}
-            title={autoPickActive ? "Restore your bracket to the point before auto-pick" : "Predict remaining matches from live form and FIFA ranking"}
-            type="button"
-          >
-            {autoPickActive ? <RotateCcw size={17} /> : <Sparkles size={17} />}
-            {autoPickActive ? "Undo auto-picks" : "Auto-pick remaining"}
-          </button>
-          <button className="secondary-button" onClick={onReset} type="button"><RotateCcw size={17} /> Reset</button>
+          <div className="dual-mode-switch" role="tablist" aria-label="Bracket mode">
+            <button
+              aria-selected={mode === "official"}
+              className={mode === "official" ? "active" : ""}
+              onClick={() => onModeChange("official")}
+              role="tab"
+              type="button"
+            >
+              Official Bracket
+            </button>
+            <button
+              aria-selected={mode === "prediction"}
+              className={mode === "prediction" ? "active" : ""}
+              onClick={() => onModeChange("prediction")}
+              role="tab"
+              type="button"
+            >
+              My Prediction
+            </button>
+          </div>
+          {isPredictionMode && (
+            <>
+              <button
+                className={`secondary-button accent ${autoPickActive ? "undo-auto-picks" : ""}`}
+                onClick={onAutoPick}
+                title={autoPickActive ? "Restore your bracket to the point before auto-pick" : "Predict remaining matches from live form and FIFA ranking"}
+                type="button"
+              >
+                {autoPickActive ? <RotateCcw size={17} /> : <Sparkles size={17} />}
+                {autoPickActive ? "Undo auto-picks" : "Auto-pick remaining"}
+              </button>
+              <select
+                aria-label="Reset a round to official results"
+                className="round-reset-select"
+                defaultValue=""
+                onChange={(event) => {
+                  const roundKey = event.currentTarget.value as BracketRoundKey;
+                  if (roundKey) onResetRoundToOfficial(roundKey);
+                  event.currentTarget.value = "";
+                }}
+              >
+                <option value="">Reset round</option>
+                {bracketRoundDefinitions.map((round) => (
+                  <option key={round.key} value={round.key}>{round.label}</option>
+                ))}
+              </select>
+              <button className="secondary-button" onClick={onResetToOfficial} type="button"><Check size={17} /> Reset to official</button>
+              <button className="secondary-button" onClick={onClearPredictions} type="button"><RotateCcw size={17} /> Clear predictions</button>
+            </>
+          )}
         </div>
       </header>
 
+      {isPredictionMode && activePredictionPath && (
+        <section className="prediction-path-manager" aria-label="Saved prediction paths">
+          <div className="prediction-path-copy">
+            <span>Saved prediction paths</span>
+            <strong>{activePredictionPath.name.trim() || "Untitled prediction"}</strong>
+            <p>Create separate brackets for different what-if journeys. Each path keeps its own picks.</p>
+          </div>
+          <label>
+            <span>Open path</span>
+            <select value={activePredictionPathId} onChange={(event) => onPredictionPathChange(event.currentTarget.value)}>
+              {predictionPaths.map((path) => (
+                <option key={path.id} value={path.id}>{path.name.trim() || "Untitled prediction"}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Path name</span>
+            <input
+              maxLength={40}
+              onChange={(event) => onRenamePredictionPath(activePredictionPath.id, event.currentTarget.value)}
+              placeholder="Prediction name"
+              type="text"
+              value={activePredictionPath.name}
+            />
+          </label>
+          <div className="prediction-path-actions">
+            <button className="secondary-button accent" onClick={onCreatePredictionPath} type="button"><Sparkles size={16} /> New path</button>
+            <button className="secondary-button danger" onClick={() => onDeletePredictionPath(activePredictionPath.id)} type="button"><X size={16} /> Delete path</button>
+          </div>
+        </section>
+      )}
+
+      <div className="dual-bracket-summary-grid">
+        <article className="dual-summary-card official-sync-card">
+          <span>Official sync</span>
+          <strong>{officialCompletedCount} completed knockout picks</strong>
+          <p>Official winners are applied only after a match is completed/full-time. Penalty winners count as match winners.</p>
+        </article>
+        <article className="dual-summary-card what-if-card">
+          <span>What-if mode</span>
+          <strong>{Object.values(predictionPicks).filter(Boolean).length} user picks saved</strong>
+          <p>Your prediction bracket is private and can disagree with the real result without changing the official bracket.</p>
+        </article>
+        <PredictionAccuracyPanel accuracy={accuracy} />
+      </div>
+
       {champion && (
-        <article className="compact-champion-banner">
+        <article className={`compact-champion-banner ${mode === "official" ? "official-champion" : "prediction-champion"}`}>
           <Trophy size={28} />
-          <span>Your champion</span>
+          <span>{mode === "official" ? "Official champion" : "Your champion"}</span>
           <strong><Flag team={champion} /> {champion.name}</strong>
         </article>
       )}
 
-      <div className="official-bracket-shell" aria-label="FIFA World Cup 2026 knockout bracket">
-        <CompactRound title="Round of 32" numbers={leftBracketMatches.round32} roundOf32={roundOf32} picks={picks} onPick={onPick} side="left" />
-        <CompactRound title="Round of 16" numbers={leftBracketMatches.round16} roundOf32={roundOf32} picks={picks} onPick={onPick} side="left" />
-        <CompactRound title="Quarter-final" numbers={leftBracketMatches.quarterFinals} roundOf32={roundOf32} picks={picks} onPick={onPick} side="left" />
-        <CompactRound title="Semi-final" numbers={leftBracketMatches.semiFinals} roundOf32={roundOf32} picks={picks} onPick={onPick} side="left" />
+      <div className={`official-bracket-shell dual-bracket-shell ${mode === "official" ? "official-mode" : "prediction-mode"}`} aria-label="FIFA World Cup 2026 knockout bracket">
+        <CompactRound title="Round of 32" numbers={leftBracketMatches.round32} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="left" />
+        <CompactRound title="Round of 16" numbers={leftBracketMatches.round16} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="left" />
+        <CompactRound title="Quarter-final" numbers={leftBracketMatches.quarterFinals} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="left" />
+        <CompactRound title="Semi-final" numbers={leftBracketMatches.semiFinals} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="left" />
 
         <section className="bracket-centre-column">
           <header>Finals</header>
           <div className="centre-final">
-            <OfficialMatchCard match={resolveOfficialMatch(104, roundOf32, picks)} selected={picks.m104} onPick={onPick} featured />
+            <OfficialMatchCard
+              match={resolveOfficialMatch(104, roundOf32, picks)}
+              selected={picks.m104}
+              predictionSelected={predictionPicks.m104}
+              officialSelected={officialPicks.m104}
+              fixture={getKnockoutFixtureForMatch(104, knockoutFixtures, roundOf32, officialPicks)}
+              mode={mode}
+              onPick={onPick}
+              onResetToOfficial={onResetMatchToOfficial}
+              featured
+            />
           </div>
           <div className="centre-third-place">
             <span>Play-off for third place</span>
-            <OfficialMatchCard match={resolveOfficialMatch(103, roundOf32, picks)} selected={picks.m103} onPick={onPick} />
+            <OfficialMatchCard
+              match={resolveOfficialMatch(103, roundOf32, picks)}
+              selected={picks.m103}
+              predictionSelected={predictionPicks.m103}
+              officialSelected={officialPicks.m103}
+              fixture={getKnockoutFixtureForMatch(103, knockoutFixtures, roundOf32, officialPicks)}
+              mode={mode}
+              onPick={onPick}
+              onResetToOfficial={onResetMatchToOfficial}
+            />
           </div>
         </section>
 
-        <CompactRound title="Semi-final" numbers={rightBracketMatches.semiFinals} roundOf32={roundOf32} picks={picks} onPick={onPick} side="right" />
-        <CompactRound title="Quarter-final" numbers={rightBracketMatches.quarterFinals} roundOf32={roundOf32} picks={picks} onPick={onPick} side="right" />
-        <CompactRound title="Round of 16" numbers={rightBracketMatches.round16} roundOf32={roundOf32} picks={picks} onPick={onPick} side="right" />
-        <CompactRound title="Round of 32" numbers={rightBracketMatches.round32} roundOf32={roundOf32} picks={picks} onPick={onPick} side="right" />
+        <CompactRound title="Semi-final" numbers={rightBracketMatches.semiFinals} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="right" />
+        <CompactRound title="Quarter-final" numbers={rightBracketMatches.quarterFinals} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="right" />
+        <CompactRound title="Round of 16" numbers={rightBracketMatches.round16} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="right" />
+        <CompactRound title="Round of 32" numbers={rightBracketMatches.round32} roundOf32={roundOf32} picks={picks} predictionPicks={predictionPicks} officialPicks={officialPicks} knockoutFixtures={knockoutFixtures} mode={mode} onPick={onPick} onResetMatchToOfficial={onResetMatchToOfficial} side="right" />
       </div>
 
       <p className="official-bracket-note">
         Third-place opponents are assigned from the exact eight qualifying groups using the
         <a href={fifaRegulationsUrl} target="_blank" rel="noreferrer"> FIFA World Cup 2026 Regulations, Annex C</a>.
+        Official winners and user predictions are stored separately.
       </p>
     </section>
   );
@@ -2013,14 +3010,24 @@ function CompactRound({
   numbers,
   roundOf32,
   picks,
+  predictionPicks,
+  officialPicks,
+  knockoutFixtures,
+  mode,
   onPick,
+  onResetMatchToOfficial,
   side
 }: {
   title: string;
   numbers: number[];
   roundOf32: Map<number, OfficialMatch>;
   picks: BracketPicks;
+  predictionPicks: BracketPicks;
+  officialPicks: BracketPicks;
+  knockoutFixtures: KnockoutFixture[];
+  mode: BracketMode;
   onPick: (matchNumber: number, teamName: string) => void;
+  onResetMatchToOfficial: (matchNumber: number) => void;
   side: "left" | "right";
 }) {
   return (
@@ -2032,7 +3039,12 @@ function CompactRound({
             key={matchNumber}
             match={resolveOfficialMatch(matchNumber, roundOf32, picks)}
             selected={picks[`m${matchNumber}`]}
+            predictionSelected={predictionPicks[`m${matchNumber}`]}
+            officialSelected={officialPicks[`m${matchNumber}`]}
+            fixture={getKnockoutFixtureForMatch(matchNumber, knockoutFixtures, roundOf32, officialPicks)}
+            mode={mode}
             onPick={onPick}
+            onResetToOfficial={onResetMatchToOfficial}
           />
         ))}
       </div>
@@ -2040,27 +3052,85 @@ function CompactRound({
   );
 }
 
+function getFixtureScoreForTeam(fixture: KnockoutFixture | undefined, team: Team) {
+  if (!fixture) return null;
+  const isHome = fixture.homeCode === team.code;
+  const isAway = fixture.awayCode === team.code;
+  if (!isHome && !isAway) return null;
+
+  const score = isHome ? fixture.homeScore : fixture.awayScore;
+  if (score === null) return null;
+
+  const penaltyScore = isHome ? fixture.homePenaltyScore : fixture.awayPenaltyScore;
+  return penaltyScore === null ? String(score) : `${score} (${penaltyScore})`;
+}
+
 function OfficialMatchCard({
   match,
   selected,
+  predictionSelected,
+  officialSelected,
+  fixture,
+  mode,
   onPick,
+  onResetToOfficial,
   featured = false
 }: {
   match: OfficialMatch;
   selected?: string;
+  predictionSelected?: string;
+  officialSelected?: string;
+  fixture?: KnockoutFixture;
+  mode: BracketMode;
   onPick: (matchNumber: number, teamName: string) => void;
+  onResetToOfficial: (matchNumber: number) => void;
   featured?: boolean;
 }) {
   const isRoundOf32 = match.number >= 73 && match.number <= 88;
+  const statusLabel = getFixtureStatusLabel(fixture);
+  const statusClass = fixture?.status ?? "scheduled";
+  const readOnly = mode === "official";
+  const canResetToOfficial = mode === "prediction" && Boolean(officialSelected) && predictionSelected !== officialSelected;
+  const officialWinner = officialSelected ? findTeam(officialSelected) : undefined;
 
   return (
-    <article className={`official-match-card ${selected ? "decided" : ""} ${featured ? "featured" : ""}`}>
-      <span className="official-match-number">M{match.number}</span>
-      {match.teams.map((team, index) =>
-        team ? (
+    <article className={`official-match-card ${selected ? "decided" : ""} ${featured ? "featured" : ""} ${readOnly ? "read-only" : ""}`}>
+      <div className="official-match-number">
+        <span className="match-header-left">
+          <span>M{match.number}</span>
+          {mode === "prediction" && officialWinner && (
+            <span className="match-inline-meta">
+              <span className="official-winner-text">Official: {officialWinner.name}</span>
+              {predictionSelected && predictionSelected !== officialSelected && <span className="overridden-text">Overridden</span>}
+              {predictionSelected === officialSelected && <span className="aligned-text">Aligned</span>}
+              {canResetToOfficial && (
+                <button className="match-inline-reset" onClick={() => onResetToOfficial(match.number)} type="button">Reset</button>
+              )}
+            </span>
+          )}
+        </span>
+        <span className={`match-status-pill ${statusClass}`}>{statusLabel}</span>
+      </div>
+      {match.teams.map((team, index) => {
+        const isSelected = selected === team?.name;
+        const isOfficialWinner = officialSelected === team?.name;
+        const isUserPick = predictionSelected === team?.name;
+        const isOverridden = mode === "prediction" && isUserPick && Boolean(officialSelected) && predictionSelected !== officialSelected;
+        const teamScore = team ? getFixtureScoreForTeam(fixture, team) : null;
+        const buttonClass = [
+          isSelected ? "winner" : selected ? "loser" : "",
+          isOfficialWinner ? "official-winner" : "",
+          isUserPick ? "user-pick" : "",
+          isOverridden ? "overridden-pick" : "",
+          isRoundOf32 ? "round32-team-row" : "",
+          readOnly ? "read-only" : ""
+        ].filter(Boolean).join(" ");
+
+        return team ? (
           <button
-            aria-pressed={selected === team.name}
-            className={`${selected === team.name ? "winner" : selected ? "loser" : ""} ${isRoundOf32 ? "round32-team-row" : ""}`}
+            aria-pressed={isSelected}
+            className={buttonClass}
+            disabled={readOnly}
             key={`${match.number}-${team.name}`}
             onClick={() => onPick(match.number, team.name)}
             type="button"
@@ -2080,18 +3150,24 @@ function OfficialMatchCard({
                 <span className="official-team-name">{team.name}</span>
               </>
             )}
-            <span className="winner-check">{selected === team.name && <Check size={11} />}</span>
+            {teamScore !== null && <span className="match-team-score">{teamScore}</span>}
+            <span className="winner-check marker-stack">
+              {isOfficialWinner && <span className="official-winner-marker" title="Official winner"><Check size={9} /></span>}
+              {mode === "prediction" && isUserPick && <span className={`user-pick-marker ${isOverridden ? "overridden" : ""}`} title={isOverridden ? "Overridden user pick" : "User pick"}>{isOverridden ? "!" : "P"}</span>}
+            </span>
           </button>
         ) : (
           <div className={`official-team-placeholder ${isRoundOf32 ? "round32-placeholder" : ""}`} key={`${match.number}-${index}`}>
             <span>{isRoundOf32 ? formatRoundOf32Slot(match.labels[index]) : match.labels[index]}</span>
-            <em>Awaiting winner</em>
+            <em>Team not confirmed</em>
           </div>
-        )
-      )}
+        );
+      })}
+
     </article>
   );
 }
+
 function formatRoundOf32Slot(label: string) {
   const position = label.charAt(0);
   const group = label.slice(1);
@@ -2163,23 +3239,25 @@ function GroupMatchesModal({
             const awayTeam = findTeamByCode(fixture.awayCode)!;
             const kickoff = new Date(fixture.kickoff);
             const isPast = kickoff.getTime() <= Date.now();
-            const canPredict = !fixture.completed && !isPast;
+            const liveScore = getFixtureDisplayScore(fixture);
+            const isLive = isFixtureLiveNow(fixture);
+            const canPredict = !fixture.completed && !isLive && !isPast;
             const predicted = draft[fixture.id] ?? { home: 0, away: 0 };
 
             return (
-              <article className={`group-fixture ${fixture.completed ? "completed" : canPredict ? "predictable" : "awaiting"}`} key={fixture.id}>
+              <article className={`group-fixture ${fixture.completed ? "completed" : isLive ? "live" : canPredict ? "predictable" : "awaiting"}`} key={fixture.id}>
                 <div className="fixture-meta">
                   <span>{kickoff.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}</span>
                   <strong>{kickoff.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</strong>
-                  <em>{fixture.completed ? "Full time" : canPredict ? "Your prediction" : "Awaiting official result"}</em>
+                  <em>{fixture.completed ? "Full time" : isLive ? "Live now" : canPredict ? "Your prediction" : "Awaiting official result"}</em>
                 </div>
                 <div className="fixture-team home-team">
                   <strong>{homeTeam.name}</strong>
                   <Flag team={homeTeam} />
                 </div>
                 <div className="fixture-scoreline">
-                  {fixture.completed ? (
-                    <><strong>{fixture.homeScore}</strong><span>–</span><strong>{fixture.awayScore}</strong></>
+                  {fixture.completed || isLive ? (
+                    <><strong>{liveScore?.[0] ?? fixture.homeScore}</strong><span>–</span><strong>{liveScore?.[1] ?? fixture.awayScore}</strong>{isLive && <em className="fixture-live-pill">LIVE</em>}</>
                   ) : canPredict ? (
                     <>
                       <input aria-label={`${homeTeam.name} predicted goals`} inputMode="numeric" max="20" min="0" onChange={(event) => updateScore(fixture.id, "home", Number(event.target.value))} type="number" value={predicted.home} />
