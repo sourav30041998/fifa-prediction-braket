@@ -1,0 +1,548 @@
+/* Dynamic FIFA experience layer: motion, polish, and interactive feedback. */
+:root {
+  --dynamic-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dynamic-shadow: 0 22px 55px rgba(5, 24, 75, 0.16);
+  --dynamic-glow: 0 0 0 1px rgba(18, 72, 223, 0.12), 0 18px 42px rgba(18, 72, 223, 0.18);
+}
+
+.dynamic-experience-ready body {
+  background:
+    radial-gradient(circle at 12% 18%, rgba(26, 85, 255, 0.08), transparent 25rem),
+    radial-gradient(circle at 86% 10%, rgba(255, 107, 0, 0.08), transparent 22rem),
+    linear-gradient(180deg, #f7f9fd 0%, #eef3ff 42%, #f6f8fb 100%);
+  background-size: 120% 120%, 120% 120%, auto;
+  animation: fifaPageAtmosphere 18s ease-in-out infinite alternate;
+}
+
+.site-shell::before {
+  position: fixed;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at var(--app-orb-x, 16%) var(--app-orb-y, 24%), rgba(18, 72, 223, 0.075), transparent 18rem),
+    linear-gradient(115deg, transparent 0 42%, rgba(255, 255, 255, 0.34) 45%, transparent 48% 100%);
+  opacity: 0.72;
+  transform: translateZ(0);
+  animation: fifaAmbientSweep 12s var(--dynamic-ease) infinite alternate;
+}
+
+.site-shell > * {
+  position: relative;
+  z-index: 1;
+}
+
+.dynamic-reveal {
+  opacity: 0;
+  filter: blur(7px);
+  scale: 0.985;
+  translate: 0 20px;
+  transition:
+    opacity 680ms var(--dynamic-ease),
+    filter 680ms var(--dynamic-ease),
+    scale 680ms var(--dynamic-ease),
+    translate 680ms var(--dynamic-ease);
+  transition-delay: calc(var(--reveal-index, 0) * 42ms);
+  will-change: opacity, filter, scale, translate;
+}
+
+.dynamic-reveal.is-visible {
+  opacity: 1;
+  filter: blur(0);
+  scale: 1;
+  translate: 0 0;
+}
+
+.announcement {
+  position: relative;
+  overflow: hidden;
+}
+
+.announcement::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 0 34%, rgba(255, 255, 255, 0.28) 46%, transparent 58% 100%);
+  content: "";
+  pointer-events: none;
+  transform: translateX(-120%);
+  animation: fifaAnnouncementSweep 4.8s ease-in-out infinite;
+}
+
+.hero {
+  isolation: isolate;
+}
+
+.hero::before {
+  animation: fifaPitchDrift 16s linear infinite;
+}
+
+.hero::after {
+  animation: fifaOrbitFloat 9s ease-in-out infinite alternate;
+}
+
+.hero-art-left {
+  animation: fifaFloatLeft 11s ease-in-out infinite alternate;
+}
+
+.hero-art-right {
+  animation: fifaFloatRight 13s ease-in-out infinite alternate;
+}
+
+.challenge-lockup,
+.hero h1,
+.hero-note {
+  text-wrap: balance;
+}
+
+.hero h1 em {
+  text-shadow:
+    0 0 16px rgba(255, 122, 24, 0.22),
+    4px 4px 0 rgba(0, 0, 0, 0.12);
+  animation: fifaChampionGlow 2.8s ease-in-out infinite alternate;
+}
+
+.progress-step > span {
+  position: relative;
+  overflow: hidden;
+}
+
+.progress-step.active > span {
+  animation: fifaProgressPulse 1.8s ease-in-out infinite;
+}
+
+.progress-step.complete > span::after,
+.progress-step.active > span::after {
+  position: absolute;
+  inset: -35%;
+  background: conic-gradient(from 120deg, transparent, rgba(255, 255, 255, 0.58), transparent 38%);
+  content: "";
+  opacity: 0.78;
+  animation: fifaBadgeSpin 2.4s linear infinite;
+}
+
+.primary-button,
+.secondary-button,
+.group-matches-button,
+.group-round32-preview-button,
+.live-row-actions button,
+.dual-mode-switch button {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.primary-button::after,
+.secondary-button::after,
+.group-matches-button::after,
+.group-round32-preview-button::after,
+.live-row-actions button::after,
+.dual-mode-switch button::after {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 0 28%, rgba(255, 255, 255, 0.58) 45%, transparent 62% 100%);
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-120%);
+  transition: opacity 180ms ease, transform 560ms var(--dynamic-ease);
+}
+
+.primary-button:hover::after,
+.secondary-button:hover::after,
+.group-matches-button:hover::after,
+.group-round32-preview-button:hover::after,
+.live-row-actions button:hover::after,
+.dual-mode-switch button:hover::after {
+  opacity: 0.75;
+  transform: translateX(120%);
+}
+
+.group-card,
+.prediction-path-manager,
+.prediction-accuracy-panel,
+.compact-champion-banner,
+.official-match-card,
+.group-fixture,
+.scenario-team-card {
+  --pointer-x: 50%;
+  --pointer-y: 50%;
+  isolation: isolate;
+  transition:
+    border-color 220ms ease,
+    box-shadow 220ms ease,
+    scale 220ms ease,
+    translate 220ms ease;
+}
+
+.group-card::before,
+.prediction-path-manager::before,
+.prediction-accuracy-panel::before,
+.compact-champion-banner::before,
+.official-match-card::before,
+.group-fixture::before,
+.scenario-team-card::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(circle at var(--pointer-x) var(--pointer-y), rgba(255, 255, 255, 0.55), transparent 34%);
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+}
+
+.group-card > *,
+.prediction-path-manager > *,
+.prediction-accuracy-panel > *,
+.compact-champion-banner > *,
+.official-match-card > *,
+.group-fixture > *,
+.scenario-team-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+.group-card:hover,
+.prediction-path-manager:hover,
+.prediction-accuracy-panel:hover,
+.group-fixture:hover,
+.scenario-team-card:hover {
+  border-color: rgba(18, 72, 223, 0.34);
+  box-shadow: var(--dynamic-shadow);
+  translate: 0 -3px;
+}
+
+.official-match-card:hover {
+  box-shadow: 0 14px 28px rgba(1, 18, 73, 0.2);
+  translate: 0 -2px;
+}
+
+.group-card:hover::before,
+.prediction-path-manager:hover::before,
+.prediction-accuracy-panel:hover::before,
+.compact-champion-banner:hover::before,
+.official-match-card:hover::before,
+.group-fixture:hover::before,
+.scenario-team-card:hover::before {
+  opacity: 1;
+}
+
+.live-team-row {
+  position: relative;
+  overflow: hidden;
+}
+
+.live-team-row:hover {
+  background: linear-gradient(90deg, #edf3ff, #ffffff 80%);
+  translate: 4px 0;
+}
+
+.live-team-row.live-match {
+  box-shadow: inset 3px 0 0 #ff6b00;
+}
+
+.live-team-row.live-match::after {
+  position: absolute;
+  top: 50%;
+  left: 11px;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 107, 0, 0.22);
+  content: "";
+  pointer-events: none;
+  transform: translateY(-50%);
+  animation: fifaLivePing 1.5s ease-out infinite;
+}
+
+.live-score-badge {
+  position: relative;
+  box-shadow: 0 0 0 1px rgba(255, 107, 0, 0.16), 0 6px 14px rgba(255, 107, 0, 0.12);
+}
+
+.live-score-badge i {
+  animation: fifaLiveDot 900ms ease-in-out infinite alternate;
+}
+
+.live-score-badge strong {
+  animation: fifaScorePop 1.8s ease-in-out infinite;
+}
+
+.drag-handle {
+  transition: color 180ms ease, rotate 180ms ease, scale 180ms ease;
+}
+
+.live-team-row:hover .drag-handle,
+.third-rank-row:hover .drag-handle {
+  color: var(--royal);
+  rotate: 4deg;
+  scale: 1.08;
+}
+
+.rank-number,
+.third-rank-number,
+.rank {
+  transition: background 180ms ease, box-shadow 180ms ease, color 180ms ease, scale 180ms ease;
+}
+
+.live-team-row:hover .rank-number,
+.third-rank-row:hover .third-rank-number,
+.team-list button:hover .rank {
+  box-shadow: 0 0 0 5px rgba(18, 72, 223, 0.08);
+  scale: 1.05;
+}
+
+.third-rank-row {
+  transition: background 180ms ease, box-shadow 180ms ease, translate 180ms ease;
+}
+
+.third-rank-row:hover {
+  background: linear-gradient(90deg, #eef3ff, #ffffff 82%);
+  box-shadow: 0 8px 22px rgba(8, 29, 67, 0.08);
+  translate: 4px 0;
+}
+
+.sticky-actions {
+  animation: fifaStickyLift 760ms var(--dynamic-ease) both;
+}
+
+.live-feed-status.live {
+  box-shadow: 0 0 0 1px rgba(13, 156, 114, 0.12), 0 16px 34px rgba(13, 156, 114, 0.12);
+}
+
+.live-feed-status.live .feed-icon {
+  animation: fifaFeedPulse 1.8s ease-in-out infinite;
+}
+
+.horizontal-bracket-shell {
+  background-position: center, 0 0, 0 0, center;
+  animation: fifaBracketGrid 24s linear infinite;
+}
+
+.round-connectors span,
+.round-connector span,
+.connector-top,
+.connector-bottom,
+.connector-vertical,
+.connector-middle {
+  transition: border-color 220ms ease, background 220ms ease, opacity 220ms ease;
+}
+
+.round-connector .connector-middle,
+.connector-middle {
+  animation: fifaConnectorGlow 2.8s ease-in-out infinite alternate;
+}
+
+.official-match-card.decided {
+  animation: fifaDecisionSettle 540ms var(--dynamic-ease) both;
+}
+
+.match-status-pill.live,
+.match-status-pill.completed {
+  animation: fifaStatusBreath 1.8s ease-in-out infinite alternate;
+}
+
+.match-status-pill.completed {
+  animation-duration: 2.6s;
+}
+
+.prediction-path-copy::before,
+.dual-bracket-section .bracket-heading .eyebrow,
+.accuracy-final-row {
+  animation: fifaSoftGlow 3.8s ease-in-out infinite alternate;
+}
+
+.group-match-modal {
+  animation: fifaModalIn 320ms var(--dynamic-ease) both;
+}
+
+.match-prediction-backdrop {
+  animation: fifaBackdropIn 220ms ease both;
+}
+
+@keyframes fifaPageAtmosphere {
+  from { background-position: 0% 0%, 100% 0%, center; }
+  to { background-position: 6% 4%, 94% 8%, center; }
+}
+
+@keyframes fifaAmbientSweep {
+  from { opacity: 0.48; transform: translate3d(-2%, -1%, 0); }
+  to { opacity: 0.78; transform: translate3d(2%, 1%, 0); }
+}
+
+@keyframes fifaAnnouncementSweep {
+  0%, 36% { transform: translateX(-120%); }
+  58%, 100% { transform: translateX(120%); }
+}
+
+@keyframes fifaPitchDrift {
+  from { background-position: 0 0, 0 0; }
+  to { background-position: 160px 0, 300px 0; }
+}
+
+@keyframes fifaOrbitFloat {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(18px, 10px, 0) scale(1.04); }
+}
+
+@keyframes fifaFloatLeft {
+  from { transform: translate3d(0, 0, 0) rotate(0deg); }
+  to { transform: translate3d(18px, -14px, 0) rotate(5deg); }
+}
+
+@keyframes fifaFloatRight {
+  from { transform: translate3d(0, 0, 0) rotate(0deg); }
+  to { transform: translate3d(-22px, -16px, 0) rotate(-6deg); }
+}
+
+@keyframes fifaChampionGlow {
+  from { text-shadow: 0 0 10px rgba(255, 122, 24, 0.18), 4px 4px 0 rgba(0, 0, 0, 0.12); }
+  to { text-shadow: 0 0 26px rgba(255, 122, 24, 0.42), 4px 4px 0 rgba(0, 0, 0, 0.12); }
+}
+
+@keyframes fifaProgressPulse {
+  0%, 100% { box-shadow: 0 0 0 5px rgba(18, 72, 223, 0.1); }
+  50% { box-shadow: 0 0 0 10px rgba(18, 72, 223, 0.18); }
+}
+
+@keyframes fifaBadgeSpin {
+  to { rotate: 360deg; }
+}
+
+@keyframes fifaLivePing {
+  from { opacity: 0.72; scale: 0.75; }
+  to { opacity: 0; scale: 2.8; }
+}
+
+@keyframes fifaLiveDot {
+  from { box-shadow: 0 0 0 0 rgba(255, 107, 0, 0.4); scale: 0.9; }
+  to { box-shadow: 0 0 0 5px rgba(255, 107, 0, 0); scale: 1.08; }
+}
+
+@keyframes fifaScorePop {
+  0%, 100% { scale: 1; }
+  50% { scale: 1.04; }
+}
+
+@keyframes fifaStickyLift {
+  from { opacity: 0; translate: 0 24px; }
+  to { opacity: 1; translate: 0 0; }
+}
+
+@keyframes fifaFeedPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(13, 156, 114, 0.25); }
+  50% { box-shadow: 0 0 0 8px rgba(13, 156, 114, 0); }
+}
+
+@keyframes fifaBracketGrid {
+  from { background-position: center, 0 0, 0 0, center; }
+  to { background-position: center, 0 24px, 24px 0, center; }
+}
+
+@keyframes fifaConnectorGlow {
+  from { opacity: 0.72; filter: drop-shadow(0 0 0 rgba(255, 255, 255, 0)); }
+  to { opacity: 1; filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.45)); }
+}
+
+@keyframes fifaDecisionSettle {
+  from { opacity: 0.72; scale: 0.985; }
+  to { opacity: 1; scale: 1; }
+}
+
+@keyframes fifaStatusBreath {
+  from { filter: saturate(0.96); }
+  to { filter: saturate(1.2) brightness(1.04); }
+}
+
+@keyframes fifaSoftGlow {
+  from { filter: saturate(0.96); }
+  to { filter: saturate(1.2) brightness(1.04); }
+}
+
+@keyframes fifaModalIn {
+  from { opacity: 0; scale: 0.965; translate: 0 18px; }
+  to { opacity: 1; scale: 1; translate: 0 0; }
+}
+
+@keyframes fifaBackdropIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+  }
+
+  .dynamic-reveal {
+    opacity: 1;
+    filter: none;
+    scale: 1;
+    translate: 0 0;
+  }
+}
+/* Mobile responsive hardening: prevent accidental page-wide horizontal scroll while keeping inner tables scrollable. */
+html,
+body,
+#root {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+@supports (overflow: clip) {
+  html,
+  body,
+  #root {
+    overflow-x: clip;
+  }
+}
+
+@media (max-width: 480px) {
+  .dynamic-reveal {
+    filter: blur(0);
+    translate: 0 10px;
+    transition-duration: 360ms;
+    transition-delay: calc(var(--reveal-index, 0) * 18ms);
+  }
+
+  .hero-art {
+    opacity: 0.68;
+  }
+
+  .primary-button,
+  .secondary-button,
+  .group-matches-button,
+  .group-round32-preview-button {
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+
+  .official-match-card:hover,
+  .group-card:hover,
+  .prediction-path-manager:hover,
+  .prediction-accuracy-panel:hover,
+  .group-fixture:hover,
+  .scenario-team-card:hover,
+  .live-team-row:hover,
+  .third-rank-row:hover {
+    translate: 0 0;
+  }
+}
+/* Keep modals out of normal page flow; the dynamic stacking layer must not override overlays. */
+.site-shell > .modal-backdrop,
+.modal-backdrop {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 250 !important;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: clamp(8px, 2.2vw, 20px);
+}

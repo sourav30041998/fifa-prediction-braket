@@ -1,4 +1,4 @@
-﻿import {
+import {
   useCallback,
   useEffect,
   useMemo,
@@ -210,8 +210,8 @@ const groupData: Array<[string, Array<[string, string]>]> = [
   ["A", [["Mexico", "MEX"], ["South Africa", "RSA"], ["Korea Republic", "KOR"], ["Czechia", "CZE"]]],
   ["B", [["Switzerland", "SUI"], ["Canada", "CAN"], ["Bosnia and Herzegovina", "BIH"], ["Qatar", "QAT"]]],
   ["C", [["Brazil", "BRA"], ["Morocco", "MAR"], ["Scotland", "SCO"], ["Haiti", "HAI"]]],
-  ["D", [["USA", "USA"], ["Australia", "AUS"], ["Paraguay", "PAR"], ["TÃ¼rkiye", "TUR"]]],
-  ["E", [["Germany", "GER"], ["CÃ´te d'Ivoire", "CIV"], ["Ecuador", "ECU"], ["CuraÃ§ao", "CUW"]]],
+  ["D", [["USA", "USA"], ["Australia", "AUS"], ["Paraguay", "PAR"], ["Türkiye", "TUR"]]],
+  ["E", [["Germany", "GER"], ["Côte d'Ivoire", "CIV"], ["Ecuador", "ECU"], ["Curaçao", "CUW"]]],
   ["F", [["Netherlands", "NED"], ["Japan", "JPN"], ["Sweden", "SWE"], ["Tunisia", "TUN"]]],
   ["G", [["Egypt", "EGY"], ["IR Iran", "IRN"], ["Belgium", "BEL"], ["New Zealand", "NZL"]]],
   ["H", [["Spain", "ESP"], ["Uruguay", "URU"], ["Cabo Verde", "CPV"], ["Saudi Arabia", "KSA"]]],
@@ -583,7 +583,7 @@ function parseFifaKnockoutFixtures(rows: FifaStanding[]) {
 
       const homeCode = getResultTeamCode(match, "Home", teamCodeById);
       const awayCode = getResultTeamCode(match, "Away", teamCodeById);
-      if (!homeCode || !awayCode) return;
+      if ((!homeCode || !awayCode) && !matchNumber) return;
 
       const homeScore = getMatchScore(match, "Home");
       const awayScore = getMatchScore(match, "Away");
@@ -591,7 +591,7 @@ function parseFifaKnockoutFixtures(rows: FifaStanding[]) {
       const lifecycle = getFixtureLifecycle(match, hasScore);
       const homePenaltyScore = getPenaltyScore(match, "Home");
       const awayPenaltyScore = getPenaltyScore(match, "Away");
-      const winnerCode = lifecycle.completed
+      const winnerCode = lifecycle.completed && homeCode && awayCode
         ? getCompletedWinnerCode(match, teamCodeById, homeCode, awayCode, homePenaltyScore, awayPenaltyScore)
         : undefined;
 
@@ -599,8 +599,8 @@ function parseFifaKnockoutFixtures(rows: FifaStanding[]) {
         id: match.IdMatch,
         number: matchNumber,
         kickoff: getMatchKickoff(match),
-        homeCode,
-        awayCode,
+        homeCode: homeCode ?? "",
+        awayCode: awayCode ?? "",
         homeScore,
         awayScore,
         homePenaltyScore,
@@ -633,24 +633,22 @@ function parseFifaCalendarKnockoutFixtures(matches: FifaMatchResult[]) {
 
     const homeCode = getResultTeamCode(match, "Home", teamCodeById);
     const awayCode = getResultTeamCode(match, "Away", teamCodeById);
-    if (!homeCode || !awayCode) return;
-
     const homeScore = getMatchScore(match, "Home");
     const awayScore = getMatchScore(match, "Away");
     const hasScore = homeScore !== null && awayScore !== null;
     const lifecycle = getFixtureLifecycle(match, hasScore);
     const homePenaltyScore = getPenaltyScore(match, "Home");
     const awayPenaltyScore = getPenaltyScore(match, "Away");
-    const winnerCode = lifecycle.completed
-      ? getCompletedWinnerCode(match, teamCodeById, homeCode, awayCode, homePenaltyScore, awayPenaltyScore)
-      : undefined;
+    const winnerCode = lifecycle.completed && homeCode && awayCode
+        ? getCompletedWinnerCode(match, teamCodeById, homeCode, awayCode, homePenaltyScore, awayPenaltyScore)
+        : undefined;
 
     fixtures.set(match.IdMatch, {
       id: match.IdMatch,
       number: matchNumber,
       kickoff: getMatchKickoff(match),
-      homeCode,
-      awayCode,
+      homeCode: homeCode ?? "",
+      awayCode: awayCode ?? "",
       homeScore,
       awayScore,
       homePenaltyScore,
@@ -689,8 +687,8 @@ function parseFifaFixtures(rows: FifaStanding[]) {
         id: match.IdMatch,
         groupId,
         kickoff: getMatchKickoff(match),
-        homeCode,
-        awayCode,
+        homeCode: homeCode ?? "",
+        awayCode: awayCode ?? "",
         homeScore,
         awayScore,
         completed: lifecycle.completed,
@@ -1104,6 +1102,29 @@ function getFixtureStatusLabel(fixture?: KnockoutFixture) {
   return "Upcoming";
 }
 
+function getKnockoutCardDateLabel(fixture: KnockoutFixture | undefined, matchNumber: number) {
+  if (!fixture?.kickoff) return `M${matchNumber}`;
+  const kickoffDate = new Date(fixture.kickoff);
+  if (!Number.isFinite(kickoffDate.getTime())) return `M${matchNumber}`;
+  return new Intl.DateTimeFormat("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(kickoffDate);
+}
+
+function getKnockoutCardStatusLabel(fixture?: KnockoutFixture) {
+  if (!fixture) return "TBD";
+  if (fixture.completed) {
+    return fixture.homePenaltyScore !== null || fixture.awayPenaltyScore !== null ? "FT (P)" : "FT";
+  }
+  if (fixture.live) return "LIVE";
+  return "TBD";
+}
+
 function hasEveryGroupReachedSecondMatch(stats: StatsMap) {
   return groups.every((group) =>
     group.teams.every((team) => (stats[team.code]?.mp ?? 0) >= 2)
@@ -1166,7 +1187,7 @@ function getRouteMetaLabel(route: QualificationRoute) {
       ? `${formatOrdinal(route.position)} place locked`
       : `${route.scenarioCount} table combination${route.scenarioCount === 1 ? "" : "s"}`;
 
-  return `${certainty} Â· Pts ${formatRange(route.pointsRange)} Â· GD ${formatRange(route.gdRange)} Â· ${route.status === "third" ? "Best-third route" : "Automatic route"}`;
+  return `${certainty} · Pts ${formatRange(route.pointsRange)} · GD ${formatRange(route.gdRange)} · ${route.status === "third" ? "Best-third route" : "Automatic route"}`;
 }
 
 function getPreviewRouteNote(preview: RoundOf32TeamScenarioPreview, manualSimulationMode: boolean) {
@@ -1993,6 +2014,90 @@ function LiveTablePredictorApp() {
     () => groupOrderKey(groupOrder),
     [groupOrder]
   );
+  useEffect(() => {
+    const root = document.documentElement;
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    root.classList.add("dynamic-experience-ready");
+    root.dataset.motion = prefersReducedMotion ? "reduced" : "enhanced";
+
+    if (prefersReducedMotion) return;
+
+    const revealSelector = [
+      ".hero-copy > *",
+      ".progress-step",
+      ".content-section > .section-heading",
+      ".selection-status",
+      ".live-feed-status",
+      ".group-card",
+      ".third-place-panel",
+      ".sticky-actions",
+      ".dual-bracket-section .bracket-heading",
+      ".dual-bracket-dashboard",
+      ".compact-champion-banner",
+      ".official-bracket-shell",
+      ".official-bracket-note",
+      ".group-match-modal"
+    ].join(",");
+
+    const revealElements = Array.from(document.querySelectorAll<HTMLElement>(revealSelector));
+    revealElements.forEach((element, index) => {
+      element.classList.add("dynamic-reveal");
+      element.style.setProperty("--reveal-index", String(index % 12));
+    });
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          entry.target.classList.add("is-visible");
+          observer.unobserve(entry.target);
+        });
+      },
+      { rootMargin: "0px 0px -8% 0px", threshold: 0.12 }
+    );
+
+    revealElements.forEach((element) => observer.observe(element));
+
+    const pointerTargets = Array.from(document.querySelectorAll<HTMLElement>([
+      ".group-card",
+      ".official-match-card",
+      ".prediction-path-manager",
+      ".prediction-accuracy-panel",
+      ".group-fixture",
+      ".scenario-team-card",
+      ".compact-champion-banner"
+    ].join(",")));
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const target = event.currentTarget as HTMLElement;
+      const rect = target.getBoundingClientRect();
+      const x = ((event.clientX - rect.left) / Math.max(rect.width, 1)) * 100;
+      const y = ((event.clientY - rect.top) / Math.max(rect.height, 1)) * 100;
+      target.style.setProperty("--pointer-x", `${Math.round(x)}%`);
+      target.style.setProperty("--pointer-y", `${Math.round(y)}%`);
+    };
+
+    const handlePointerLeave = (event: PointerEvent) => {
+      const target = event.currentTarget as HTMLElement;
+      target.style.setProperty("--pointer-x", "50%");
+      target.style.setProperty("--pointer-y", "50%");
+    };
+
+    pointerTargets.forEach((element) => {
+      element.style.setProperty("--pointer-x", "50%");
+      element.style.setProperty("--pointer-y", "50%");
+      element.addEventListener("pointermove", handlePointerMove);
+      element.addEventListener("pointerleave", handlePointerLeave);
+    });
+
+    return () => {
+      observer.disconnect();
+      pointerTargets.forEach((element) => {
+        element.removeEventListener("pointermove", handlePointerMove);
+        element.removeEventListener("pointerleave", handlePointerLeave);
+      });
+    };
+  }, [view, bracketMode, activeGroupOrderKey, activePredictionPathId, predictionGroup, opponentPreviewGroup]);
 
   useEffect(() => {
     if (!hasProjectedTableData || manualSimulationMode || sameGroupOrder(groupOrder, rankedGroupOrder)) return;
@@ -2233,23 +2338,6 @@ function LiveTablePredictorApp() {
     setAutoPickSnapshot(null);
     setAutoPickCache(null);
   }
-
-  function resetRoundToOfficial(roundKey: BracketRoundKey) {
-    const round = bracketRoundDefinitions.find((item) => item.key === roundKey);
-    if (!round) return;
-    updateActivePredictionPicks((current) => {
-      const next = { ...current };
-      round.numbers.forEach((matchNumber) => {
-        const officialWinner = officialPicks[`m${matchNumber}`];
-        if (officialWinner) next[`m${matchNumber}`] = officialWinner;
-        else delete next[`m${matchNumber}`];
-      });
-      return sanitizeOfficialPicks(next, bracketRoundOf32);
-    });
-    setAutoPickSnapshot(null);
-    setAutoPickCache(null);
-  }
-
   function resetBracketToOfficial() {
     updateActivePredictionPicks(sanitizeOfficialPicks(officialPicks, bracketRoundOf32));
     setAutoPickSnapshot(null);
@@ -2366,7 +2454,6 @@ function LiveTablePredictorApp() {
             onAutoPick={autoPickBracket}
             autoPickActive={autoPickSnapshot !== null}
             onResetMatchToOfficial={resetMatchToOfficial}
-            onResetRoundToOfficial={resetRoundToOfficial}
             onResetToOfficial={resetBracketToOfficial}
             onClearPredictions={resetBracket}
             onBack={() => switchView("groups")}
@@ -2555,7 +2642,7 @@ function GroupPredictor({
           <button className="secondary-button accent" onClick={onSyncLiveTable} type="button"><RefreshCw size={17} /> Sync live table</button>
         )}
         <div>
-          <span>{manualSimulationMode ? "Manual simulation locked Â· Round of 32 follows your table" : "Your ranking is saved automatically"}</span>
+          <span>{manualSimulationMode ? "Manual simulation locked · Round of 32 follows your table" : "Your ranking is saved automatically"}</span>
           <button className="primary-button" onClick={onContinue} type="button">Build Round of 32 <ArrowRight size={18} /></button>
         </div>
       </div>
@@ -2661,7 +2748,7 @@ function LiveGroupCard({
           })}
         </div>
       </div>
-      <footer><span>Q automatic Â· 3Q best third</span><span>Live + predicted stats</span></footer>
+      <footer><span>Q automatic · 3Q best third</span><span>Live + predicted stats</span></footer>
       <button
         className="group-matches-button"
         disabled={fixtureCount === 0}
@@ -2669,7 +2756,7 @@ function LiveGroupCard({
         type="button"
       >
         <span>Predict Group {group.id} matches</span>
-        <strong>{fixtureCount || "â€”"}/6</strong>
+        <strong>{fixtureCount || "—"}/6</strong>
       </button>
       <button
         className="group-round32-preview-button"
@@ -2718,7 +2805,7 @@ function ThirdPlacePredictor({ order, stats, onMove }: { order: string[]; stats:
         <div>
           <span className="eyebrow">POSITION 3 TABLE</span>
           <h3>Rank the third-place teams</h3>
-          <p>Drag the teams into your predicted cross-group order. Positions 1â€“8 qualify.</p>
+          <p>Drag the teams into your predicted cross-group order. Positions 1–8 qualify.</p>
         </div>
         <div className="third-summary"><strong>8</strong><span>of 12 advance</span></div>
       </header>
@@ -2807,7 +2894,6 @@ function KnockoutStage({
   onAutoPick,
   autoPickActive,
   onResetMatchToOfficial,
-  onResetRoundToOfficial,
   onResetToOfficial,
   onClearPredictions,
   onBack
@@ -2831,12 +2917,10 @@ function KnockoutStage({
   onAutoPick: () => void;
   autoPickActive: boolean;
   onResetMatchToOfficial: (matchNumber: number) => void;
-  onResetRoundToOfficial: (roundKey: BracketRoundKey) => void;
   onResetToOfficial: () => void;
   onClearPredictions: () => void;
   onBack: () => void;
 }) {
-  const officialCompletedCount = Object.values(officialPicks).filter(Boolean).length;
   const isPredictionMode = mode === "prediction";
   const activePredictionPath = predictionPaths.find((path) => path.id === activePredictionPathId) ?? predictionPaths[0];
 
@@ -2844,7 +2928,7 @@ function KnockoutStage({
     <section className="content-section official-knockout-section dual-bracket-section">
       <header className="section-heading bracket-heading">
         <div>
-          <span className="eyebrow">DUAL BRACKET MODE · M73-M104</span>
+          <span className="eyebrow">DUAL BRACKET MODE � M73-M104</span>
           <h2>{isPredictionMode ? "My prediction bracket" : "Official bracket"}</h2>
           <p>
             {isPredictionMode
@@ -2885,73 +2969,47 @@ function KnockoutStage({
                 {autoPickActive ? <RotateCcw size={17} /> : <Sparkles size={17} />}
                 {autoPickActive ? "Undo auto-picks" : "Auto-pick remaining"}
               </button>
-              <select
-                aria-label="Reset a round to official results"
-                className="round-reset-select"
-                defaultValue=""
-                onChange={(event) => {
-                  const roundKey = event.currentTarget.value as BracketRoundKey;
-                  if (roundKey) onResetRoundToOfficial(roundKey);
-                  event.currentTarget.value = "";
-                }}
-              >
-                <option value="">Reset round</option>
-                {bracketRoundDefinitions.map((round) => (
-                  <option key={round.key} value={round.key}>{round.label}</option>
-                ))}
-              </select>
               <button className="secondary-button" onClick={onResetToOfficial} type="button"><Check size={17} /> Reset to official</button>
-              <button className="secondary-button" onClick={onClearPredictions} type="button"><RotateCcw size={17} /> Clear predictions</button>
+              <button className="secondary-button bracket-clear-action" onClick={onClearPredictions} type="button"><RotateCcw size={17} /> Clear predictions</button>
             </>
           )}
         </div>
       </header>
 
       {isPredictionMode && activePredictionPath && (
-        <section className="prediction-path-manager" aria-label="Saved prediction paths">
-          <div className="prediction-path-copy">
-            <span>Saved prediction paths</span>
-            <strong>{activePredictionPath.name.trim() || "Untitled prediction"}</strong>
-            <p>Create separate brackets for different what-if journeys. Each path keeps its own picks.</p>
-          </div>
-          <label>
-            <span>Open path</span>
-            <select value={activePredictionPathId} onChange={(event) => onPredictionPathChange(event.currentTarget.value)}>
-              {predictionPaths.map((path) => (
-                <option key={path.id} value={path.id}>{path.name.trim() || "Untitled prediction"}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>Path name</span>
-            <input
-              maxLength={40}
-              onChange={(event) => onRenamePredictionPath(activePredictionPath.id, event.currentTarget.value)}
-              placeholder="Prediction name"
-              type="text"
-              value={activePredictionPath.name}
-            />
-          </label>
-          <div className="prediction-path-actions">
-            <button className="secondary-button accent" onClick={onCreatePredictionPath} type="button"><Sparkles size={16} /> New path</button>
-            <button className="secondary-button danger" onClick={() => onDeletePredictionPath(activePredictionPath.id)} type="button"><X size={16} /> Delete path</button>
-          </div>
+        <section className="dual-bracket-dashboard" aria-label="Prediction path controls and accuracy">
+          <section className="prediction-path-manager" aria-label="Saved prediction paths">
+            <div className="prediction-path-copy">
+              <span>Saved prediction paths</span>
+              <strong>{activePredictionPath.name.trim() || "Untitled prediction"}</strong>
+              <p>Create separate brackets for different what-if journeys. Each path keeps its own picks.</p>
+            </div>
+            <label>
+              <span>Open path</span>
+              <select value={activePredictionPathId} onChange={(event) => onPredictionPathChange(event.currentTarget.value)}>
+                {predictionPaths.map((path) => (
+                  <option key={path.id} value={path.id}>{path.name.trim() || "Untitled prediction"}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Path name</span>
+              <input
+                maxLength={40}
+                onChange={(event) => onRenamePredictionPath(activePredictionPath.id, event.currentTarget.value)}
+                placeholder="Prediction name"
+                type="text"
+                value={activePredictionPath.name}
+              />
+            </label>
+            <div className="prediction-path-actions">
+              <button className="secondary-button accent" onClick={onCreatePredictionPath} type="button"><Sparkles size={16} /> New path</button>
+              <button className="secondary-button danger" onClick={() => onDeletePredictionPath(activePredictionPath.id)} type="button"><X size={16} /> Delete path</button>
+            </div>
+          </section>
+          <PredictionAccuracyPanel accuracy={accuracy} />
         </section>
       )}
-
-      <div className="dual-bracket-summary-grid">
-        <article className="dual-summary-card official-sync-card">
-          <span>Official sync</span>
-          <strong>{officialCompletedCount} completed knockout picks</strong>
-          <p>Official winners are applied only after a match is completed/full-time. Penalty winners count as match winners.</p>
-        </article>
-        <article className="dual-summary-card what-if-card">
-          <span>What-if mode</span>
-          <strong>{Object.values(predictionPicks).filter(Boolean).length} user picks saved</strong>
-          <p>Your prediction bracket is private and can disagree with the real result without changing the official bracket.</p>
-        </article>
-        <PredictionAccuracyPanel accuracy={accuracy} />
-      </div>
 
       {champion && (
         <article className={`compact-champion-banner ${mode === "official" ? "official-champion" : "prediction-champion"}`}>
@@ -3094,32 +3152,31 @@ function OfficialMatchCard({
   featured?: boolean;
 }) {
   const isRoundOf32 = match.number >= 73 && match.number <= 88;
-  const roundLabel = getKnockoutRoundLabel(match.number);
-  const statusLabel = getFixtureStatusLabel(fixture);
   const statusClass = fixture?.status ?? "scheduled";
+  const cardDateLabel = getKnockoutCardDateLabel(fixture, match.number);
+  const cardStatusLabel = getKnockoutCardStatusLabel(fixture);
   const readOnly = mode === "official";
-  const canResetToOfficial = mode === "prediction" && Boolean(officialSelected) && predictionSelected !== officialSelected;
-  const officialWinner = officialSelected ? findTeam(officialSelected) : undefined;
+  const isTbdMatch = match.teams.every((team) => !team);
+  const hasPredictionOverride = mode === "prediction" && Boolean(officialSelected) && Boolean(predictionSelected) && predictionSelected !== officialSelected;
+  const canResetToOfficial = hasPredictionOverride;
 
   return (
-    <article className={`official-match-card ${selected ? "decided" : ""} ${featured ? "featured" : ""} ${readOnly ? "read-only" : ""}`}>
+    <article className={`official-match-card ${selected ? "decided" : ""} ${featured ? "featured" : ""} ${readOnly ? "read-only" : ""} ${isTbdMatch ? "tbd-match-card" : ""}`}>
       <div className="official-match-number">
         <span className="match-header-left">
-          <strong>M{match.number}</strong>
-          <em>{roundLabel}</em>
-          {mode === "prediction" && officialWinner && (
-            <span className="match-inline-meta">
-              <span className="official-winner-text">Official: {officialWinner.name}</span>
-              {predictionSelected && predictionSelected !== officialSelected && <span className="overridden-text">Overridden</span>}
-              {predictionSelected === officialSelected && <span className="aligned-text">Aligned</span>}
-              {canResetToOfficial && (
-                <button className="match-inline-reset" onClick={() => onResetToOfficial(match.number)} type="button">Reset</button>
-              )}
-            </span>
-          )}
+          <strong>{cardDateLabel}</strong>
+          <em>M{match.number}</em>
         </span>
-        <span className={`match-status-pill ${statusClass}`}>{statusLabel}</span>
+        <span className={`match-status-pill ${statusClass}`}>{cardStatusLabel}</span>
       </div>
+      {hasPredictionOverride && (
+        <div className="match-inline-meta">
+          <span className="overridden-text">Overridden</span>
+          {canResetToOfficial && (
+            <button className="match-inline-reset" onClick={() => onResetToOfficial(match.number)} type="button">Reset</button>
+          )}
+        </div>
+      )}
       {match.teams.map((team, index) => {
         const sourceLabel = isRoundOf32 ? formatRoundOf32Slot(match.labels[index]) : match.labels[index];
         const isSelected = selected === team?.name;
@@ -3144,12 +3201,12 @@ function OfficialMatchCard({
             disabled={readOnly}
             key={`${match.number}-${team.name}`}
             onClick={() => onPick(match.number, team.name)}
-            title={`${team.name} · ${sourceLabel}`}
+            title={`${team.name} � ${sourceLabel}`}
             type="button"
           >
             <span className="official-team-identity">
               <Flag team={team} />
-              <span className="official-team-code">{team.code}</span>
+              <span className="official-team-name">{team.name}</span>
             </span>
             <span className="round32-source-label">{sourceLabel}</span>
             {teamScore !== null && <span className="match-team-score">{teamScore}</span>}
@@ -3159,9 +3216,17 @@ function OfficialMatchCard({
             </span>
           </button>
         ) : (
-          <div className={`official-team-placeholder ${isRoundOf32 ? "round32-placeholder" : ""}`} key={`${match.number}-${index}`}>
-            <span>{sourceLabel}</span>
-            <em>Awaiting winner</em>
+          <div
+            aria-label={`TBD, ${sourceLabel}`}
+            className={`official-team-placeholder tbd-team-row ${isRoundOf32 ? "round32-placeholder" : ""}`}
+            key={`${match.number}-${index}`}
+            title={sourceLabel}
+          >
+            <span className="tbd-team-identity">
+              <span className="tbd-shield" aria-hidden="true" />
+              <span className="tbd-team-name">TBD</span>
+            </span>
+            <em>{sourceLabel}</em>
           </div>
         );
       })}
@@ -3236,7 +3301,7 @@ function GroupMatchesModal({
       >
         <header className="group-match-modal-header">
           <div>
-            <span className="eyebrow">GROUP {group.id} Â· ALL MATCHES</span>
+            <span className="eyebrow">GROUP {group.id} · ALL MATCHES</span>
             <h2 id="match-prediction-title">Predict the scorelines</h2>
             <p>Completed FIFA results are locked. Enter scores for upcoming matches to project the table.</p>
           </div>
@@ -3267,11 +3332,11 @@ function GroupMatchesModal({
                 </div>
                 <div className="fixture-scoreline">
                   {fixture.completed || isLive ? (
-                    <><strong>{liveScore?.[0] ?? fixture.homeScore}</strong><span>â€“</span><strong>{liveScore?.[1] ?? fixture.awayScore}</strong>{isLive && <em className="fixture-live-pill">LIVE</em>}</>
+                    <><strong>{liveScore?.[0] ?? fixture.homeScore}</strong><span>–</span><strong>{liveScore?.[1] ?? fixture.awayScore}</strong>{isLive && <em className="fixture-live-pill">LIVE</em>}</>
                   ) : canPredict ? (
                     <>
                       <input aria-label={`${homeTeam.name} predicted goals`} inputMode="numeric" max="20" min="0" onChange={(event) => updateScore(fixture.id, "home", Number(event.target.value))} type="number" value={predicted.home} />
-                      <span>â€“</span>
+                      <span>–</span>
                       <input aria-label={`${awayTeam.name} predicted goals`} inputMode="numeric" max="20" min="0" onChange={(event) => updateScore(fixture.id, "away", Number(event.target.value))} type="number" value={predicted.away} />
                     </>
                   ) : (
@@ -3338,7 +3403,7 @@ function GroupOpponentPreviewModal({
       >
         <header className="group-match-modal-header">
           <div>
-            <span className="eyebrow">GROUP {group.id} Â· SYSTEM-GENERATED</span>
+            <span className="eyebrow">GROUP {group.id} · SYSTEM-GENERATED</span>
             <h2 id="opponent-preview-title">Round of 32 possible routes</h2>
             <p>{manualSimulationMode ? "This preview follows your current manual table and third-place board before mapping FIFA Round of 32 slots." : `Every remaining Group ${group.id} match is simulated as home win, draw, or away win. The table is recalculated for every combination before mapping FIFA Round of 32 slots.`}</p>
           </div>
@@ -3366,7 +3431,7 @@ function GroupOpponentPreviewModal({
                       <Flag team={preview.team} />
                       <div>
                         <strong>{preview.team.name}</strong>
-                        <span>{formatGroupPosition(preview.currentPosition)} now Â· {preview.currentStats.mp} MP Â· {preview.currentStats.pts} Pts Â· {preview.currentStats.gd > 0 ? "+" : ""}{preview.currentStats.gd} GD</span>
+                        <span>{formatGroupPosition(preview.currentPosition)} now · {preview.currentStats.mp} MP · {preview.currentStats.pts} Pts · {preview.currentStats.gd > 0 ? "+" : ""}{preview.currentStats.gd} GD</span>
                       </div>
                     </div>
                     <span className={`scenario-status-pill ${getPreviewPillClass(preview)}`}>
@@ -3483,7 +3548,7 @@ function Footer() {
   return (
     <footer className="site-footer">
       <div className="footer-brand"><strong>FIFA</strong><span>WORLD CUP 26 BRACKET CHALLENGE</span></div>
-      <p>Team groups, flags and current match statistics are sourced from FIFAâ€™s official standings feed. This is an unofficial predictor concept.</p>
+      <p>Team groups, flags and current match statistics are sourced from FIFA’s official standings feed. This is an unofficial predictor concept.</p>
       <nav><a href={fifaStandingsPage} target="_blank" rel="noreferrer">FIFA standings</a><a href="#privacy">Privacy</a><a href="#help">Help</a></nav>
     </footer>
   );

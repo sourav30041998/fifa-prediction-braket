@@ -7,6 +7,7 @@ import "./rank-predictor.css";
 import "./live-table.css";
 import "./compact-bracket.css";
 import "./score-predictions.css";
+import "./dynamic-experience.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
